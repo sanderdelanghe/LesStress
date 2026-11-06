@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LesStress" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#e7f4fd</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#e7f4fd</item>
+        <item name="android:windowSplashScreenBackground">#e7f4fd</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/app_icon</item>
+    </style>
+</resources>
