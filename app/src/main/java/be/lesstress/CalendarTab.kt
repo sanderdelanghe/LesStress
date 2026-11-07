@@ -162,8 +162,8 @@ private class Parsed(
 private val WS = Regex("\\s+")
 private val WORD_RE = Regex("[\\p{L}\\p{N}]+")
 private val CODE_RE = Regex("^[A-Za-z]{1,3}\\d{2,}[A-Za-z0-9]*$")                 // U00K1a
-private val TYPE_NUM_RE = Regex("^\\d{1,2}\\s+\\S.*")                              // "02 Practicum"
-private val TYPE_ALPHA_RE = Regex("^[A-Z]{2,3}\\s+\\S.*")                          // "EC Examen"
+private val TYPE_NUM_RE = Regex("^\\d{1,2}\\s+\\S.*")                               // "02 Practicum"
+private val TYPE_ALPHA_RE = Regex("^[A-Z]{2,3}\\s+\\S.*")                           // "EC Examen"
 private val GROUP_RE = Regex("(?i)\\b(groep|group|gr)\\s*[A-Z]?\\d*\\b")
 private val GROUP_IN_TEXT_RE = Regex(
     "(?i)\\b(?:groep|group|gr)\\s*[A-Z]?\\d+(?:\\s*[+&]\\s*[A-Z]?\\d+)*|\\b(?:groep|group|gr)\\s+[A-Z]\\b")
@@ -357,10 +357,11 @@ private fun layoutDay(list: List<Event>, minMin: Long): List<Placed> {
 
 /* =====================  5. UI  ===================== */
 
-private enum class CalView { DAY, WEEK, LIST }
-private val LABEL_W = 44.dp
+// Aangepaste enum voor dagen selectie (1, 2, 3, 7 dagen en Lijst)
+private enum class CalView(val days: Int) { D1(1), D2(2), D3(3), D7(7), LIST(-1) }
+
 private val MIN_H = 40.dp
-private const val MIN_ZOOM = 32f
+private const val MIN_ZOOM = 20f // Verlaagd zodat er meer uren op korte schermen (3:4) passen
 private const val MAX_ZOOM = 160f
 
 private fun isWeekend(d: LocalDate) = d.dayOfWeek.value >= 6
@@ -372,11 +373,28 @@ private fun stepDay(d: LocalDate, dir: Int, ev: List<Event>): LocalDate {
 }
 
 private fun pageDays(view: CalView, day: LocalDate, ev: List<Event>, idx: Int): List<LocalDate> {
-    if (view == CalView.DAY) { var d = day; repeat(abs(idx)) { d = stepDay(d, if (idx < 0) -1 else 1, ev) }; return listOf(d) }
-    val monday = mondayOf(day).plusDays(7L * idx)
-    val weekend = ev.any { it.date() == monday.plusDays(5) || it.date() == monday.plusDays(6) }
-    return (0 until if (weekend) 7 else 5).map { monday.plusDays(it.toLong()) }
+    if (view == CalView.D7) {
+        val monday = mondayOf(day).plusDays(7L * idx)
+        val weekend = ev.any { it.date() == monday.plusDays(5) || it.date() == monday.plusDays(6) }
+        return (0 until if (weekend) 7 else 5).map { monday.plusDays(it.toLong()) }
+    }
+    
+    // Voor D1, D2, D3 schalen we dynamisch op basis van verborgen dagen (weekends)
+    var startD = day
+    val stepDir = if (idx < 0) -1 else 1
+    repeat(abs(idx) * view.days) { startD = stepDay(startD, stepDir, ev) }
+
+    val result = mutableListOf<LocalDate>()
+    var current = startD
+    while (result.size < view.days) {
+        if (!hidden(current, ev)) {
+            result.add(current)
+        }
+        current = current.plusDays(1)
+    }
+    return result
 }
+
 private fun t2(nl: String, en: String) = if (appLocale().language == "nl") nl else en
 
 @Composable
@@ -401,7 +419,7 @@ fun CalendarTab() {
     val ctx = LocalContext.current
     var events by remember { mutableStateOf(listOf<Event>()) }
     LaunchedEffect(AppState.version) { events = Store.events(ctx).filter { !it.deleted } }
-    var view by remember { mutableStateOf(CalView.WEEK) }
+    var view by remember { mutableStateOf(CalView.D7) }
     var day by remember { mutableStateOf(LocalDate.now(zone)) }
     var selected by remember { mutableStateOf<Event?>(null) }
     var colorPickerEvent by remember { mutableStateOf<Event?>(null) }
@@ -415,8 +433,20 @@ fun CalendarTab() {
     var hourDp by remember { mutableFloatStateOf(ctx.prefs.getFloat("hourDp", 64f).coerceIn(MIN_ZOOM, MAX_ZOOM)) }
 
     fun settleDay(d: LocalDate) = if (hidden(d, events)) stepDay(d, 1, events) else d
-    fun shift(dir: Int) { day = if (view == CalView.DAY) stepDay(day, dir, events) else day.plusDays(7L * dir) }
-    fun viewName(v: CalView) = when (v) { CalView.DAY -> tr("day"); CalView.WEEK -> tr("week"); CalView.LIST -> tr("list") }
+    
+    fun shift(dir: Int) { 
+        if (view == CalView.D7) day = day.plusDays(7L * dir)
+        else if (view != CalView.LIST) {
+            var d = day
+            repeat(view.days) { d = stepDay(d, dir, events) }
+            day = d
+        }
+    }
+    
+    fun viewName(v: CalView) = when (v) { 
+        CalView.LIST -> tr("list") 
+        else -> "${v.days}" 
+    }
 
     fun zoom(z: Float, fy: Float) {
         val old = hourDp
@@ -435,65 +465,82 @@ fun CalendarTab() {
         scroll.scrollTo(with(density) { (hourDp.dp * ((first - 30).coerceAtLeast(0) / 60f)).roundToPx() })
     }
 
-    Column(Modifier.fillMaxSize()) {
-        if (searching) {
-            val focus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { focus.requestFocus() }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton({ searching = false; query = "" }) { Icon(Icons.Filled.Close, contentDescription = tr("cancel")) }
-                TextField(query, { query = it }, Modifier.weight(1f).focusRequester(focus), singleLine = true,
-                    placeholder = { Text(t2("Zoeken in alle lesinfo...", "Search all lesson info...")) },
-                    colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-            }
-            SearchResults(query, events, loc) { selected = it }
-        } else {
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                val title = if (view == CalView.DAY) day.format(DateTimeFormatter.ofPattern("EEEE d MMM", loc)) else day.format(DateTimeFormatter.ofPattern("LLLL yyyy", loc))
-                Text(title.cap(), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                IconButton({ searching = true }) { Icon(Icons.Filled.Search, contentDescription = null) }
-                IconButton({ val t = LocalDate.now(zone); day = if (view == CalView.DAY) settleDay(t) else t }) {
-                    Icon(Icons.Filled.DateRange, contentDescription = tr("today")) }
-            }
+    // Responsive Root: Check schermbreedte én hoogte
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val isCompact = maxWidth < 350.dp
+        val isShort = maxHeight < 500.dp
+        val labelW = if (isCompact) 32.dp else 44.dp // Smallere tijd-as op kleine schermen
+        val topPadding = if (isShort) 2.dp else 6.dp // Krimp verticale marges
 
-            // Stretched Full-Width Pills Row
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CalView.values().forEach { v ->
-                    val isSelected = view == v
-                    val bg by animateColorAsState(if (isSelected) cs.primary else cs.surfaceVariant, label = "pill_bg")
-                    val fg by animateColorAsState(if (isSelected) cs.onPrimary else cs.onSurfaceVariant, label = "pill_fg")
+        Column(Modifier.fillMaxSize()) {
+            if (searching) {
+                val focus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { focus.requestFocus() }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = topPadding), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton({ searching = false; query = "" }) { Icon(Icons.Filled.Close, contentDescription = tr("cancel")) }
+                    TextField(query, { query = it }, Modifier.weight(1f).focusRequester(focus), singleLine = true,
+                        placeholder = { Text(t2("Zoeken...", "Search...")) },
+                        colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                }
+                SearchResults(query, events, loc, isCompact) { selected = it }
+            } else {
+                // Header (schaalt mee in marges en tekstgrootte)
+                Row(
+                    Modifier.fillMaxWidth().padding(start = if (isCompact) 8.dp else 16.dp, end = 4.dp, top = topPadding, bottom = topPadding), 
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val title = if (view == CalView.D1) day.format(DateTimeFormatter.ofPattern("EEEE d MMM", loc)) else day.format(DateTimeFormatter.ofPattern("LLLL yyyy", loc))
+                    val titleStyle = if (isCompact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge
+                    
+                    Text(title.cap(), style = titleStyle, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton({ searching = true }) { Icon(Icons.Filled.Search, contentDescription = null) }
+                    IconButton({ val t = LocalDate.now(zone); day = if (view != CalView.D7 && view != CalView.LIST) settleDay(t) else t }) {
+                        Icon(Icons.Filled.DateRange, contentDescription = tr("today")) }
+                }
 
-                    Surface(
-                        onClick = { view = v; if (v == CalView.DAY) day = settleDay(day) },
-                        shape = RoundedCornerShape(20.dp),
-                        color = bg,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = viewName(v).cap(),
-                                color = fg,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                textAlign = TextAlign.Center
-                            )
+                // Adaptive Pills Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = if (isCompact) 8.dp else 12.dp, vertical = topPadding)
+                        // Als het scherm te smal is, maken we de pillen horizontaal scrollbaar ipv ze plat te drukken
+                        .then(if (isCompact) Modifier.horizontalScroll(rememberScrollState()) else Modifier),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CalView.values().forEach { v ->
+                        val isSelected = view == v
+                        val bg by animateColorAsState(if (isSelected) cs.primary else cs.surfaceVariant, label = "pill_bg")
+                        val fg by animateColorAsState(if (isSelected) cs.onPrimary else cs.onSurfaceVariant, label = "pill_fg")
+                        
+                        // Op compacte schermen met scroll geven we een minWidth ipv weight
+                        val pillModifier = if (isCompact) Modifier.widthIn(min = 54.dp) else Modifier.weight(1f)
+
+                        Surface(
+                            onClick = { view = v; if (v != CalView.LIST && v != CalView.D7) day = settleDay(day) },
+                            shape = RoundedCornerShape(20.dp),
+                            color = bg,
+                            modifier = pillModifier.height(if (isShort) 30.dp else 36.dp) // compacter in hoogte indien short
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                                Text(
+                                    text = viewName(v).cap(),
+                                    color = fg,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            if (view == CalView.LIST) AgendaList(day, events, loc, tr("noevents")) { selected = it }
-            else PagedGrid(Modifier.weight(1f), view, day, events, scroll, hourDp.dp, loc,
-                onZoom = { z, fy -> zoom(z, fy) },
-                onZoomEnd = { ctx.prefs.edit().putFloat("hourDp", hourDp).apply() },
-                onShift = { shift(it) }, onOpen = { selected = it }, onDay = { day = it; view = CalView.DAY })
+                if (view == CalView.LIST) AgendaList(day, events, loc, tr("noevents"), isCompact) { selected = it }
+                else PagedGrid(Modifier.weight(1f), view, day, events, scroll, hourDp.dp, loc, labelW,
+                    onZoom = { z, fy -> zoom(z, fy) },
+                    onZoomEnd = { ctx.prefs.edit().putFloat("hourDp", hourDp).apply() },
+                    onShift = { shift(it) }, onOpen = { selected = it }, onDay = { day = it; view = CalView.D1 })
+            }
         }
     }
 
@@ -506,7 +553,6 @@ fun CalendarTab() {
             onDismissRequest = { selected = null },
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Klikbaar gekleurd bolletje om de kleur te veranderen
                     Box(
                         Modifier
                             .size(20.dp)
@@ -516,7 +562,6 @@ fun CalendarTab() {
                     )
                     Spacer(Modifier.width(10.dp))
                     Text(e.title(), Modifier.weight(1f))
-                    // Rauwe SUMMARY / LOCATION / DESCRIPTION tonen
                     IconButton({ showRaw = !showRaw }, Modifier.size(32.dp)) {
                         Icon(Icons.Filled.Code, contentDescription = "Raw", Modifier.size(20.dp),
                             tint = if (showRaw) cs.primary else cs.onSurfaceVariant)
@@ -560,12 +605,12 @@ fun CalendarTab() {
         )
     }
 
-    // Color Picker Dialog geopend via het gekleurde bolletje
+    // Color Picker Dialog
     colorPickerEvent?.let { e ->
         val current = e.color()
         AlertDialog(
             onDismissRequest = { colorPickerEvent = null },
-            title = { Text(t2("Kies een kleur voor dit vak", "Choose a color for this course")) },
+            title = { Text(t2("Kies een kleur", "Choose a color"), style = MaterialTheme.typography.titleMedium) },
             text = {
                 Column {
                     Text(e.title(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
@@ -573,7 +618,8 @@ fun CalendarTab() {
                         columns = GridCells.Fixed(4),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth().height(200.dp)
+                        // heightIn voorkomt dat dialog knoppen buiten een klein scherm geduwd worden
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp) 
                     ) {
                         items(EXTENDED_PALETTE) { color ->
                             Box(
@@ -604,7 +650,7 @@ fun CalendarTab() {
 }
 
 @Composable
-private fun SearchResults(query: String, events: List<Event>, loc: Locale, onOpen: (Event) -> Unit) {
+private fun SearchResults(query: String, events: List<Event>, loc: Locale, isCompact: Boolean, onOpen: (Event) -> Unit) {
     val tokens = query.lowercase().split(" ").filter { it.isNotBlank() }
     if (tokens.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(t2("Typ om te zoeken", "Type to search"), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -617,7 +663,7 @@ private fun SearchResults(query: String, events: List<Event>, loc: Locale, onOpe
             tokens.all { it in hay }
         }
     }
-    AgendaList(null, hits, loc, t2("Geen resultaten", "No results"), onOpen)
+    AgendaList(null, hits, loc, t2("Geen resultaten", "No results"), isCompact, onOpen)
 }
 
 private fun Modifier.pinchZoom(onZoom: (Float, Float) -> Unit, onEnd: () -> Unit) = pointerInput(Unit) {
@@ -643,7 +689,7 @@ private fun Modifier.pinchZoom(onZoom: (Float, Float) -> Unit, onEnd: () -> Unit
 }
 
 @Composable
-private fun PagedGrid(modifier: Modifier, view: CalView, day: LocalDate, events: List<Event>, scroll: ScrollState, hourH: Dp, loc: Locale,
+private fun PagedGrid(modifier: Modifier, view: CalView, day: LocalDate, events: List<Event>, scroll: ScrollState, hourH: Dp, loc: Locale, labelW: Dp,
                       onZoom: (Float, Float) -> Unit, onZoomEnd: () -> Unit, onShift: (Int) -> Unit,
                       onOpen: (Event) -> Unit, onDay: (LocalDate) -> Unit) {
     val cs = MaterialTheme.colorScheme
@@ -668,7 +714,7 @@ private fun PagedGrid(modifier: Modifier, view: CalView, day: LocalDate, events:
             }
         })) {
         Row(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.width(LABEL_W))
+            Spacer(Modifier.width(labelW))
             Box(Modifier.weight(1f).clipToBounds().onSizeChanged { widthPx = it.width }) {
                 for (i in -1..1) Row(Modifier.fillMaxWidth().offset { IntOffset(off.floatValue.roundToInt() + i * widthPx, 0) }) {
                     pages[i + 1].forEach { d -> DayHeader(d, today, loc, Modifier.weight(1f)) { onDay(d) } }
@@ -677,17 +723,19 @@ private fun PagedGrid(modifier: Modifier, view: CalView, day: LocalDate, events:
         }
         HorizontalDivider(color = cs.outlineVariant)
         Row(Modifier.fillMaxWidth().weight(1f).pinchZoom({ z, fy -> zoomCb.value(z, fy) }, { endCb.value() }).verticalScroll(scroll)) {
-            Column(Modifier.width(LABEL_W)) {
+            Column(Modifier.width(labelW)) {
                 for (h in 0 until 24) Box(Modifier.height(hourH)) {
-                    if (h > 0) Text("%02d:00".format(h), style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant,
-                        modifier = Modifier.offset(y = (-8).dp).padding(start = 6.dp))
+                    // Op een smal scherm gebruiken we bijv '09' ipv '09:00'
+                    val timeFormat = if (labelW < 40.dp) "%02d".format(h) else "%02d:00".format(h)
+                    if (h > 0) Text(timeFormat, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant,
+                        modifier = Modifier.offset(y = (-8).dp).padding(start = 4.dp))
                 }
             }
             Box(Modifier.weight(1f).height(hourH * 24).clipToBounds()) {
                 for (i in -1..1) {
                     val ds = pages[i + 1]
                     Row(Modifier.fillMaxSize().offset { IntOffset(off.floatValue.roundToInt() + i * widthPx, 0) }) {
-                        ds.forEach { d -> DayColumn(d, events, hourH, ds.size > 1, today, Modifier.weight(1f), onOpen) }
+                        ds.forEach { d -> DayColumn(d, events, hourH, ds.size > 2, today, Modifier.weight(1f), onOpen) }
                     }
                 }
             }
@@ -714,6 +762,7 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
         for (h in 0 until 24) HorizontalDivider(Modifier.offset(y = hourH * h), color = cs.outlineVariant.copy(alpha = 0.6f))
         Box(Modifier.width(1.dp).fillMaxHeight().background(cs.outlineVariant.copy(alpha = 0.6f)))
         val minMin = (MIN_H.value / hourH.value * 60f).toLong().coerceAtLeast(15L)
+        
         layoutDay(events.filter { it.date() == d }, minMin).forEach { p ->
             val e = p.e
             val dur = ((e.end - e.start) / 60_000).toInt()
@@ -722,13 +771,20 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
             val lineH = if (compact) 12f else 15f
             val lines = ((h.value - 4f) / (lineH + 1f)).toInt().coerceAtLeast(1)
             val eventColor = e.color()
+            
+            // Verberg tekst compleet als de kolom belachelijk smal wordt
+            val showText = colW > 35.dp
+
             Column(Modifier.offset(x = colW * p.col + 1.dp, y = hourH * e.startMin() / 60 + 1.dp)
                 .width(colW - 2.dp).height(h - 2.dp)
                 .clip(RoundedCornerShape(6.dp)).background(eventColor)
-                .clickable { onOpen(e) }.padding(horizontal = 4.dp, vertical = 2.dp)) {
-                Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium,
-                    fontSize = if (compact) 10.sp else 13.sp, lineHeight = lineH.sp, maxLines = lines, overflow = TextOverflow.Ellipsis)
-                if (e.pin().isNotEmpty()) PinText(e.pin(), Color.White.copy(alpha = 0.9f), if (compact) 9f else 11f)
+                .clickable { onOpen(e) }.padding(horizontal = if (showText) 4.dp else 1.dp, vertical = 2.dp)) {
+                
+                if (showText) {
+                    Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium,
+                        fontSize = if (compact) 10.sp else 13.sp, lineHeight = lineH.sp, maxLines = lines, overflow = TextOverflow.Ellipsis)
+                    if (e.pin().isNotEmpty()) PinText(e.pin(), Color.White.copy(alpha = 0.9f), if (compact) 9f else 11f)
+                }
             }
         }
         if (d == today) {
@@ -740,7 +796,7 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
 }
 
 @Composable
-private fun AgendaList(from: LocalDate?, events: List<Event>, loc: Locale, empty: String, onOpen: (Event) -> Unit) {
+private fun AgendaList(from: LocalDate?, events: List<Event>, loc: Locale, empty: String, isCompact: Boolean, onOpen: (Event) -> Unit) {
     val grouped = events.sortedBy { it.start }.groupBy { it.date() }
     val state = rememberLazyListState()
     val cs = MaterialTheme.colorScheme
@@ -752,39 +808,55 @@ private fun AgendaList(from: LocalDate?, events: List<Event>, loc: Locale, empty
         if (i >= 0) state.scrollToItem(i)
     }
     if (grouped.isEmpty()) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(empty) }; return }
-    LazyColumn(state = state, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+    
+    LazyColumn(state = state, contentPadding = PaddingValues(horizontal = if(isCompact) 8.dp else 12.dp, vertical = 8.dp)) {
         grouped.forEach { (d, list) ->
             item(key = d.toString()) {
-                Row(Modifier.padding(vertical = 6.dp)) {
-                    Column(Modifier.width(52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(d.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).uppercase(), style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-                        Box(Modifier.size(36.dp).clip(CircleShape).background(if (d == today) cs.primary else Color.Transparent), contentAlignment = Alignment.Center) {
-                            Text(d.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, color = if (d == today) cs.onPrimary else cs.onSurface)
+                // Adaptive layout: Op een klein scherm zetten we de datum Bóven de events ipv ernaast
+                if (isCompact) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp, start = 4.dp)) {
+                            Text(d.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).uppercase(), style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
+                            Spacer(Modifier.width(8.dp))
+                            Box(Modifier.size(28.dp).clip(CircleShape).background(if (d == today) cs.primary else Color.Transparent), contentAlignment = Alignment.Center) {
+                                Text(d.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, color = if (d == today) cs.onPrimary else cs.onSurface)
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            list.forEach { e -> EventCard(e, onOpen) }
                         }
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        list.forEach { e ->
-                            val eColor = e.color()
-                            val pr = e.parsed()
-                            val grp = pr.groep.takeUnless { it.isEmpty() || pr.lesinfo.contains(it, ignoreCase = true) }.orEmpty()
-                            val subDetails = listOf(pr.soort, grp, pr.lesinfo).filter { it.isNotEmpty() }.joinToString(" • ")
-
-                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(eColor).clickable { onOpen(e) }.padding(10.dp)) {
-                                Text(e.timeText(), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
-                                Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyLarge)
-                                if (subDetails.isNotEmpty()) {
-                                    Text(
-                                        subDetails,
-                                        color = Color.White.copy(alpha = 0.85f),
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
-                                }
-                                if (e.pin().isNotEmpty()) PinText(e.pin(), Color.White.copy(alpha = 0.9f), 12f)
+                } else {
+                    Row(Modifier.padding(vertical = 6.dp)) {
+                        Column(Modifier.width(52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(d.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).uppercase(), style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                            Box(Modifier.size(36.dp).clip(CircleShape).background(if (d == today) cs.primary else Color.Transparent), contentAlignment = Alignment.Center) {
+                                Text(d.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, color = if (d == today) cs.onPrimary else cs.onSurface)
                             }
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            list.forEach { e -> EventCard(e, onOpen) }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EventCard(e: Event, onOpen: (Event) -> Unit) {
+    val eColor = e.color()
+    val pr = e.parsed()
+    val grp = pr.groep.takeUnless { it.isEmpty() || pr.lesinfo.contains(it, ignoreCase = true) }.orEmpty()
+    val subDetails = listOf(pr.soort, grp, pr.lesinfo).filter { it.isNotEmpty() }.joinToString(" • ")
+
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(eColor).clickable { onOpen(e) }.padding(10.dp)) {
+        Text(e.timeText(), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
+        Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyLarge)
+        if (subDetails.isNotEmpty()) {
+            Text(subDetails, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
+        }
+        if (e.pin().isNotEmpty()) PinText(e.pin(), Color.White.copy(alpha = 0.9f), 12f)
     }
 }
