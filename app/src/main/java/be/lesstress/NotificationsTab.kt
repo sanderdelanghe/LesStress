@@ -51,8 +51,24 @@ fun NotificationsTab() {
     var showSettings by remember { mutableStateOf(false) }
 
     var changes by remember { mutableStateOf(listOf<Change>()) }
-    LaunchedEffect(AppState.version) {
-        changes = Store.changes(ctx).sortedByDescending { it.time }
+    LaunchedEffect(AppState.version, showSettings) {
+        val forwardDays = ctx.prefs.getInt("notif_forward_days", 14)
+        val maxForwardMillis = forwardDays * 86_400_000L
+        val now = System.currentTimeMillis()
+        val deletedUids = Store.events(ctx).filter { it.deleted }.map { it.uid }.toSet()
+
+        changes = Store.changes(ctx)
+            .filter { ch ->
+                val ev = ch.new ?: ch.old
+                val uid = ev?.uid ?: ""
+                val lessonStart = ev?.start ?: 0L
+
+                val notDeleted = uid !in deletedUids
+                val withinForwardWindow = (lessonStart - now) <= maxForwardMillis
+
+                notDeleted && withinForwardWindow
+            }
+            .sortedByDescending { it.time }
     }
 
     Scaffold(
@@ -447,6 +463,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                                 onClick = {
                                     forwardDays = days
                                     ctx.prefs.edit().putInt("notif_forward_days", days).apply()
+                                    AppState.version++
                                 },
                                 label = { Text(label, style = MaterialTheme.typography.labelSmall) }
                             )

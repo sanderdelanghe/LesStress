@@ -111,16 +111,14 @@ suspend fun syncCalendar(c: Context) {
         when {
             old == null -> saved[n.uid] = n
             else -> {
+                saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
                 val timeChanged = old.start != n.start || old.end != n.end
                 val locChanged = old.location.trim() != n.location.trim()
-                if (timeChanged || locChanged) {
-                    saved[n.uid] = n.copy(deleted = false)
+                if ((timeChanged || locChanged) && !old.deleted) {
                     Store.addChange(c, Change(now, old, n))
                     if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
                         notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
                     }
-                } else {
-                    saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
                 }
             }
         }
