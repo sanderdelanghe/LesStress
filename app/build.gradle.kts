@@ -7,7 +7,7 @@ android {
     namespace = "be.lesstress"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
-    defaultConfig { applicationId = "be.lesstress"; minSdk = 26; targetSdk = 35; versionCode = 4; versionName = "1.3" }
+    defaultConfig { applicationId = "be.lesstress"; minSdk = 26; targetSdk = 35; versionCode = 5; versionName = "1.4" }
     buildFeatures { compose = true }
     kotlinOptions { jvmTarget = "17" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

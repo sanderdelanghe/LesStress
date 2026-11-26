@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -330,10 +331,22 @@ private fun rawClean(s: String) = s.replace("\\", "").trim()
 
 /** Uitgebreid kleurenpalet (16 kleuropties) */
 private val EXTENDED_PALETTE = listOf(
-    Color(0xFF3F51B5), Color(0xFF1E88E5), Color(0xFF009688), Color(0xFF00AFC8),
-    Color(0xFF4CAF50), Color(0xFF2E7D32), Color(0xFF8BC34A), Color(0xFFFF9800),
-    Color(0xFFF57C00), Color(0xFFE91E63), Color(0xFFD81B60), Color(0xFF9C27B0),
-    Color(0xFF673AB7), Color(0xFF795548), Color(0xFF607D8B), Color(0xFF455A64)
+    Color(0xFFFFFFFF), // White (Wit)
+    Color(0xFFD6D6D6), // Light Gray (Lichtgrijs)
+    Color(0xFF9E9E9E), // Gray (Grijs)
+    Color(0xFF616161), // Dark Gray (Donkergrijs)
+    Color(0xFF111111), // Black (Zwart)
+    Color(0xFFE53935), // Red (Rood)
+    Color(0xFFFB8C00), // Orange (Oranje)
+    Color(0xFFFDD835), // Yellow (Geel)
+    Color(0xFF8BC34A), // Lime (Limoen)
+    Color(0xFF2E7D32), // Green (Groen)
+    Color(0xFF00897B), // Teal (Blauwgroen)
+    Color(0xFF00ACC1), // Cyan (Cyaan)
+    Color(0xFF1E88E5), // Blue (Blauw)
+    Color(0xFF8E24AA), // Purple (Paars)
+    Color(0xFFD81B60), // Pink (Roze)
+    Color(0xFF6D4C41)  // Brown (Bruin)
 )
 
 private fun getCourseColor(context: Context, courseId: String): Color {
@@ -652,7 +665,7 @@ fun CalendarTab() {
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         // heightIn voorkomt dat dialog knoppen buiten een klein scherm geduwd worden
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp) 
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp) 
                     ) {
                         items(EXTENDED_PALETTE) { color ->
                             Box(
@@ -661,8 +674,8 @@ fun CalendarTab() {
                                     .clip(CircleShape)
                                     .background(color)
                                     .border(
-                                        width = if (current == color) 3.dp else 0.dp,
-                                        color = if (current == color) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                        width = if (current == color) 3.dp else 1.dp,
+                                        color = if (current == color) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
                                         shape = CircleShape
                                     )
                                     .clickable {
@@ -804,6 +817,7 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
             val vPad = if (h < 24.dp) 1.dp else 2.dp
             val lines = ((h.value - 4f) / (lineH + 1f)).toInt().coerceAtLeast(1)
             val eventColor = e.color()
+            val textColor = if (eventColor.luminance() > 0.45f) Color(0xFF1A1A1A) else Color.White
             
             // Verberg tekst compleet als de kolom belachelijk smal wordt
             val showText = colW > 35.dp
@@ -811,12 +825,13 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
             Column(Modifier.offset(x = colW * p.col + 1.dp, y = hourH * e.startMin() / 60 + 1.dp)
                 .width(colW - 2.dp).height((h - 2.dp).coerceAtLeast(6.dp))
                 .clip(RoundedCornerShape(6.dp)).background(eventColor)
+                .then(if (eventColor.luminance() > 0.85f) Modifier.border(1.dp, cs.outlineVariant, RoundedCornerShape(6.dp)) else Modifier)
                 .clickable { onOpen(e) }.padding(horizontal = if (showText) 4.dp else 1.dp, vertical = vPad)) {
                 
                 if (showText) {
-                    Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium,
+                    Text(e.title(), color = textColor, fontWeight = FontWeight.Medium,
                         fontSize = if (compactText) 10.sp else 13.sp, lineHeight = lineH.sp, maxLines = lines, overflow = TextOverflow.Ellipsis)
-                    if (e.pin().isNotEmpty() && h >= 28.dp) PinText(e.pin(), Color.White.copy(alpha = 0.9f), if (compact) 9f else 11f)
+                    if (e.pin().isNotEmpty() && h >= 28.dp) PinText(e.pin(), textColor.copy(alpha = 0.85f), if (compact) 9f else 11f)
                 }
             }
         }
@@ -880,16 +895,19 @@ private fun AgendaList(from: LocalDate?, events: List<Event>, loc: Locale, empty
 @Composable
 private fun EventCard(e: Event, onOpen: (Event) -> Unit) {
     val eColor = e.color()
+    val textColor = if (eColor.luminance() > 0.45f) Color(0xFF1A1A1A) else Color.White
     val pr = e.parsed()
     val grp = pr.groep.takeUnless { it.isEmpty() || pr.lesinfo.contains(it, ignoreCase = true) }.orEmpty()
     val subDetails = listOf(pr.soort, grp, pr.lesinfo).filter { it.isNotEmpty() }.joinToString(" • ")
 
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(eColor).clickable { onOpen(e) }.padding(10.dp)) {
-        Text(e.timeText(), color = Color.White.copy(alpha = 0.9f), style = MaterialTheme.typography.labelMedium)
-        Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyLarge)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(eColor)
+        .then(if (eColor.luminance() > 0.85f) Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)) else Modifier)
+        .clickable { onOpen(e) }.padding(10.dp)) {
+        Text(e.timeText(), color = textColor.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
+        Text(e.title(), color = textColor, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyLarge)
         if (subDetails.isNotEmpty()) {
-            Text(subDetails, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
+            Text(subDetails, color = textColor.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
         }
-        if (e.pin().isNotEmpty()) PinText(e.pin(), Color.White.copy(alpha = 0.9f), 12f)
+        if (e.pin().isNotEmpty()) PinText(e.pin(), textColor.copy(alpha = 0.85f), 12f)
     }
 }
