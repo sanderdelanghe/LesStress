@@ -47,11 +47,9 @@ import java.util.Locale
 /* =====================  1. ADDRESSES & URLS  ===================== */
 
 const val RESTAURANT_URL = "https://www.alma.be/nl/restaurants/kulak-restaurant"
+const val BROODJES_URL = "https://www.alma.be/nl/restaurants/kulak-campus-hal-a-broodje-app"
 const val ORDER_URL = "https://orderbilly.com/alma-kulak"
 private const val ALMA = "https://www.alma.be"
-
-private const val REST_HOURS_URL = "https://www.alma.be/index.php?p=actions/sprig-core/components/render&renderFull=true&sprig%3AsiteId=f917f933ee16d5a085aba64c8949a493baa01c526306bd394c2da00c06344eeb1&sprig%3Aid=0e50d261f2360e519c25e9a5d71e91ce58b0fe205e99804f1f4a192d4c3975f5heroTimes-121027&sprig%3Acomponent=1e9703ec58575ea02b01220099d79775ab5ba1b44b3fdafecd38fe3f531a1d3c&sprig%3Atemplate=41520ac5763104b9a86297981e0c494436a4c6dfe38242cc2af4dc9e1163b2cb_snippet%2F_calendar%2F_heroTimes.twig&sprig%3Avariables%5BentryId%5D=35f481f98b14734d4d5cda4ffb1db2484f82af9f5344b90131cd628a56a66beb121027"
-private const val BROOD_HOURS_URL = "https://www.alma.be/index.php?p=actions/sprig-core/components/render&renderFull=true&sprig%3AsiteId=f917f933ee16d5a085aba64c8949a493baa01c526306bd394c2da00c06344eeb1&sprig%3Aid=53f9d9e14ab5147270b0485224202c755d3934473b82f594cf59f2461f9cbbffheroTimes-122556&sprig%3Acomponent=1e9703ec58575ea02b01220099d79775ab5ba1b44b3fdafecd38fe3f531a1d3c&sprig%3Atemplate=41520ac5763104b9a86297981e0c494436a4c6dfe38242cc2af4dc9e1163b2cb_snippet%2F_calendar%2F_heroTimes.twig&sprig%3Avariables%5BentryId%5D=0c207b9c96dcb16a65a6b395db9b04178a7ca0f56c6db13b44e09753240cb6bb122556"
 
 private val brussels = ZoneId.of("Europe/Brussels")
 
@@ -59,26 +57,11 @@ private val brussels = ZoneId.of("Europe/Brussels")
 
 private fun open(url: String) = (URL(url).openConnection() as HttpURLConnection).apply {
     connectTimeout = 10_000; readTimeout = 15_000
-        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) LesStress")
+    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) LesStress")
     setRequestProperty("Accept-Language", "nl-BE,nl;q=0.9,en;q=0.8")
 }
 
 private suspend fun almaGet(url: String): String = withContext(Dispatchers.IO) { open(url).inputStream.bufferedReader().use { it.readText() } }
-
-private suspend fun sprigGet(url: String, targetId: String): String = withContext(Dispatchers.IO) {
-    (URL(url).openConnection() as HttpURLConnection).apply {
-        connectTimeout = 10_000; readTimeout = 15_000
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) LesStress")
-        setRequestProperty("Accept-Language", "nl-BE,nl;q=0.9,en;q=0.8")
-        setRequestProperty("Accept", "*/*")
-        setRequestProperty("Cache-Control", "no-cache")
-        setRequestProperty("hx-current-url", RESTAURANT_URL)
-        setRequestProperty("hx-request", "true")
-        setRequestProperty("hx-target", targetId)
-        setRequestProperty("hx-trigger", targetId)
-        setRequestProperty("Referer", RESTAURANT_URL)
-    }.inputStream.bufferedReader().use { it.readText() }
-}
 
 private val imageCache = LruCache<String, ImageBitmap>(48)
 
@@ -238,20 +221,26 @@ fun DiningTab() {
 
     var restHours by remember { mutableStateOf<List<HSection>?>(null) }
     var broodHours by remember { mutableStateOf<List<HSection>?>(null) }
-    LaunchedEffect(AppState.version, reload) {
-        restHours = runCatching { parseHours(sprigGet(REST_HOURS_URL, "heroTimes-121027"), now.toLocalDate()) }.getOrDefault(emptyList())
-    }
-    LaunchedEffect(AppState.version, reload) {
-        broodHours = runCatching { parseHours(sprigGet(BROOD_HOURS_URL, "heroTimes-122556"), now.toLocalDate()) }.getOrDefault(emptyList())
-    }
-
     var dates by remember(reload) { mutableStateOf(listOf<LocalDate>()) }
     val cache = remember { HashMap<String, Menu>() }
 
     LaunchedEffect(AppState.version, reload) {
-        val key = "${AppState.version}-$reload-null"
-        val m = cache[key] ?: withContext(Dispatchers.Default) { parseMenu(almaGet(RESTAURANT_URL)) }.also { cache[key] = it }
-        if (m.dates.isNotEmpty()) dates = m.dates
+        val html = runCatching { almaGet(RESTAURANT_URL) }.getOrNull()
+        if (html == null) {
+            restHours = emptyList()
+        } else {
+            val today = now.toLocalDate()
+            restHours = runCatching { withContext(Dispatchers.Default) { parseHours(html, today) } }.getOrDefault(emptyList())
+            val key = "${AppState.version}-$reload-null"
+            val m = cache[key] ?: withContext(Dispatchers.Default) { parseMenu(html) }.also { cache[key] = it }
+            if (m.dates.isNotEmpty()) dates = m.dates
+        }
+    }
+    LaunchedEffect(AppState.version, reload) {
+        broodHours = runCatching {
+            val html = almaGet(BROODJES_URL)
+            withContext(Dispatchers.Default) { parseHours(html, now.toLocalDate()) }
+        }.getOrDefault(emptyList())
     }
 
     fun launch(intent: Intent) { runCatching { ctx.startActivity(intent) } }

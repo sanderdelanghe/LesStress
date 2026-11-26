@@ -382,6 +382,7 @@ fun SettingsDialog(onDismiss: () -> Unit) {
     var forwardDays by remember { mutableIntStateOf(ctx.prefs.getInt("notif_forward_days", 14)) }
     var lead by remember { mutableStateOf(ctx.prefs.getInt("lead", 5).toString()) }
     var ics by remember { mutableStateOf(ctx.prefs.getString("ics", "") ?: "") }
+    var ics2 by remember { mutableStateOf(ctx.prefs.getString("ics2", "") ?: "") }
     var syncStatus by remember { mutableStateOf<String?>(null) }
     var isSyncing by remember { mutableStateOf(false) }
 
@@ -572,13 +573,25 @@ fun SettingsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                OutlinedTextField(
+                    value = ics2,
+                    onValueChange = {
+                        ics2 = it
+                        ctx.prefs.edit().putString("ics2", it).apply()
+                    },
+                    label = { Text(s("Extra Agenda", "Extra Calendar")) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 Button(
                     onClick = {
                         scope.launch {
                             isSyncing = true
                             syncStatus = try {
                                 val currentIcs = ctx.prefs.getString("ics", "")?.trim().orEmpty()
-                                if (currentIcs.isBlank()) {
+                                val currentIcs2 = ctx.prefs.getString("ics2", "")?.trim().orEmpty()
+                                if (currentIcs.isBlank() && currentIcs2.isBlank()) {
                                     s("Voer eerst een ICS-link in", "Please enter an ICS link first")
                                 } else {
                                     syncCalendar(ctx)

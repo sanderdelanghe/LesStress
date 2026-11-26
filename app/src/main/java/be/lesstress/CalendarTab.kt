@@ -75,7 +75,7 @@ private fun parseTime(v: String): Long {
 private fun unescape(s: String) = s.replace("\\n", "\n").replace("\\N", "\n")
     .replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
 
-fun parseIcs(raw: String): List<Event> {
+fun parseIcs(raw: String, source: String = "kuleuven"): List<Event> {
     val text = raw.replace("\r", "").replace("\n ", "").replace("\n\t", "") // unfold wrapped lines
     val out = mutableListOf<Event>()
     var p = mutableMapOf<String, String>()
@@ -83,9 +83,12 @@ fun parseIcs(raw: String): List<Event> {
         if (line == "BEGIN:VEVENT") p = mutableMapOf()
         else if (line == "END:VEVENT") runCatching {
             val sum = unescape(p["SUMMARY"] ?: ""); val loc = unescape(p["LOCATION"] ?: "")
-            val st = parseTime(p["DTSTART"]!!); val en = parseTime(p["DTEND"]!!)
-            out += Event(p["UID"]!!, sum, loc, st, en, "$sum|$loc|$st|$en".hashCode().toString(),
-                false, unescape(p["DESCRIPTION"] ?: ""))
+            val st = parseTime(p["DTSTART"]!!)
+            val en = p["DTEND"]?.let { parseTime(it) } ?: (st + 3_600_000L)
+            val rawUid = p["UID"]!!
+            val uid = if (source == "kuleuven") rawUid else "ics2:$rawUid"
+            out += Event(uid, sum, loc, st, en, "$sum|$loc|$st|$en".hashCode().toString(),
+                false, unescape(p["DESCRIPTION"] ?: ""), 0L, source)
         } else if (':' in line) p[line.substringBefore(':').substringBefore(';')] = line.substringAfter(':')
     }
     return out
@@ -95,10 +98,9 @@ fun parseIcs(raw: String): List<Event> {
 
 suspend fun syncCalendar(c: Context) {
     val icsUrl = c.prefs.getString("ics", "")?.trim().orEmpty()
-    if (icsUrl.isBlank()) return
-    val fresh = parseIcs(httpGet(icsUrl))
-    if (fresh.isEmpty()) return
-    val freshIds = fresh.map { it.uid }.toSet()
+    val ics2Url = c.prefs.getString("ics2", "")?.trim().orEmpty()
+    if (icsUrl.isBlank() && ics2Url.isBlank()) return
+
     val saved = Store.events(c).associateBy { it.uid }.toMutableMap()
     val now = System.currentTimeMillis()
     val notifType = c.prefs.getString("notif_type", "both") ?: "both"
@@ -106,35 +108,56 @@ suspend fun syncCalendar(c: Context) {
     val forwardDays = c.prefs.getInt("notif_forward_days", 14)
     val maxForwardMillis = forwardDays * 86_400_000L
 
-    for (n in fresh) {
-        val old = saved[n.uid]
-        when {
-            old == null -> saved[n.uid] = n
-            else -> {
-                saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
-                val timeChanged = old.start != n.start || old.end != n.end
-                val locChanged = old.location.trim() != n.location.trim()
-                if ((timeChanged || locChanged) && !old.deleted) {
-                    Store.addChange(c, Change(now, old, n))
-                    if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
-                        notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
+    if (icsUrl.isNotBlank()) {
+        val fresh = parseIcs(httpGet(icsUrl), "kuleuven")
+        if (fresh.isNotEmpty()) {
+            val freshIds = fresh.map { it.uid }.toSet()
+            for (n in fresh) {
+                val old = saved[n.uid]
+                when {
+                    old == null -> saved[n.uid] = n
+                    else -> {
+                        saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
+                        val timeChanged = old.start != n.start || old.end != n.end
+                        val locChanged = old.location.trim() != n.location.trim()
+                        if ((timeChanged || locChanged) && !old.deleted) {
+                            Store.addChange(c, Change(now, old, n))
+                            if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
+                                notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
+                            }
+                        }
+                    }
+                }
+            }
+            val windowStart = fresh.minOf { it.start }
+            for (old in saved.values.toList()) {
+                if (old.source == "kuleuven" && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
+                    saved.remove(old.uid)
+                    if (!old.deleted) {
+                        Store.addChange(c, Change(now, old, null))
+                        if (changesNotif && (old.start - now) in 0..maxForwardMillis) {
+                            notify(c, old.summary.substringBefore(","), "⚠ " + tr("changes"), old.uid.hashCode() + 1)
+                        }
                     }
                 }
             }
         }
+    } else {
+        saved.entries.removeAll { it.value.source == "kuleuven" }
     }
-    val windowStart = fresh.minOf { it.start }
-    for (old in saved.values.toList()) {
-        if (old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
-            saved.remove(old.uid)
-            if (!old.deleted) {
-                Store.addChange(c, Change(now, old, null))
-                if (changesNotif && (old.start - now) in 0..maxForwardMillis) {
-                    notify(c, old.summary.substringBefore(","), "⚠ " + tr("changes"), old.uid.hashCode() + 1)
-                }
-            }
+
+    if (ics2Url.isNotBlank()) {
+        val fresh2 = parseIcs(httpGet(ics2Url), "extra")
+        val fresh2Ids = fresh2.map { it.uid }.toSet()
+        for (n in fresh2) {
+            val old = saved[n.uid]
+            saved[n.uid] = if (old == null) n else n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
         }
+        saved.entries.removeAll { it.value.source == "extra" && it.key !in fresh2Ids }
+    } else {
+        saved.entries.removeAll { it.value.source == "extra" }
     }
+
     val all = saved.values.toList()
     Store.saveEvents(c, all)
     scheduleAlarms(c, all)
@@ -145,7 +168,9 @@ suspend fun syncCalendar(c: Context) {
 private val ID = Regex("[A-Z]\\d\\d[A-Z]\\d[a-z]")
 
 /** Only a stable key for the per-course colour preference (e.g. U00K1a). Never shown. */
-private fun Event.courseId() = ID.find(summary)?.value ?: summary.take(6)
+private fun Event.courseId() =
+    if (source != "kuleuven") "extra_${summary.take(12)}"
+    else ID.find(summary)?.value ?: summary.take(6)
 
 private class Parsed(
     val vak: List<String>,
@@ -177,6 +202,17 @@ private fun looksLikeName(t: String) = !Regex("[\\d:=()]").containsMatchIn(t) &&
  * field or is a known code/label; anything else is appended to lesinfo (prefixed with a warning sign).
  */
 private fun splitEvent(e: Event): Parsed {
+    if (e.source != "kuleuven") {
+        return Parsed(
+            vak = listOf(e.summary.ifBlank { t2("Afspraak", "Event") }),
+            soort = "",
+            lesinfo = e.desc.trim(),
+            groep = "",
+            rooms = if (e.location.isNotBlank()) listOf(e.location.trim()) else emptyList(),
+            teachers = emptyList(),
+            overig = ""
+        )
+    }
     val vak = mutableListOf<String>()
     val teachers = mutableListOf<String>()
     val lesinfo = mutableListOf<String>()
@@ -358,7 +394,6 @@ private fun layoutDay(list: List<Event>, minMin: Long): List<Placed> {
 // Aangepaste enum voor dagen selectie (1, 2, 3, 7 dagen en Lijst)
 private enum class CalView(val days: Int) { D1(1), D2(2), D3(3), D7(7), LIST(-1) }
 
-private val MIN_H = 40.dp
 private const val MIN_ZOOM = 20f // Verlaagd zodat er meer uren op korte schermen (3:4) passen
 private const val MAX_ZOOM = 160f
 
@@ -759,14 +794,14 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
         val w = maxWidth
         for (h in 0 until 24) HorizontalDivider(Modifier.offset(y = hourH * h), color = cs.outlineVariant.copy(alpha = 0.6f))
         Box(Modifier.width(1.dp).fillMaxHeight().background(cs.outlineVariant.copy(alpha = 0.6f)))
-        val minMin = (MIN_H.value / hourH.value * 60f).toLong().coerceAtLeast(15L)
-        
-        layoutDay(events.filter { it.date() == d }, minMin).forEach { p ->
+        layoutDay(events.filter { it.date() == d }, 1L).forEach { p ->
             val e = p.e
             val dur = ((e.end - e.start) / 60_000).toInt()
-            val h = maxOf(hourH * dur / 60, MIN_H)
+            val h = hourH * dur / 60
             val colW = w / p.cols
-            val lineH = if (compact) 12f else 15f
+            val compactText = compact || h < 24.dp
+            val lineH = if (compactText) 11f else 15f
+            val vPad = if (h < 24.dp) 1.dp else 2.dp
             val lines = ((h.value - 4f) / (lineH + 1f)).toInt().coerceAtLeast(1)
             val eventColor = e.color()
             
@@ -774,14 +809,14 @@ private fun DayColumn(d: LocalDate, events: List<Event>, hourH: Dp, compact: Boo
             val showText = colW > 35.dp
 
             Column(Modifier.offset(x = colW * p.col + 1.dp, y = hourH * e.startMin() / 60 + 1.dp)
-                .width(colW - 2.dp).height(h - 2.dp)
+                .width(colW - 2.dp).height((h - 2.dp).coerceAtLeast(6.dp))
                 .clip(RoundedCornerShape(6.dp)).background(eventColor)
-                .clickable { onOpen(e) }.padding(horizontal = if (showText) 4.dp else 1.dp, vertical = 2.dp)) {
+                .clickable { onOpen(e) }.padding(horizontal = if (showText) 4.dp else 1.dp, vertical = vPad)) {
                 
                 if (showText) {
                     Text(e.title(), color = Color.White, fontWeight = FontWeight.Medium,
-                        fontSize = if (compact) 10.sp else 13.sp, lineHeight = lineH.sp, maxLines = lines, overflow = TextOverflow.Ellipsis)
-                    if (e.pin().isNotEmpty()) PinText(e.pin(), Color.White.copy(alpha = 0.9f), if (compact) 9f else 11f)
+                        fontSize = if (compactText) 10.sp else 13.sp, lineHeight = lineH.sp, maxLines = lines, overflow = TextOverflow.Ellipsis)
+                    if (e.pin().isNotEmpty() && h >= 28.dp) PinText(e.pin(), Color.White.copy(alpha = 0.9f), if (compact) 9f else 11f)
                 }
             }
         }

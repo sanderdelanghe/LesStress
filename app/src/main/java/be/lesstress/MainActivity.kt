@@ -65,7 +65,8 @@ data class Event(
     val hash: String,
     val deleted: Boolean = false,
     val desc: String = "",
-    val deletedAt: Long = 0L
+    val deletedAt: Long = 0L,
+    val source: String = "kuleuven"
 )
 
 data class Change(val time: Long, val old: Event?, val new: Event?)
@@ -154,7 +155,7 @@ fun tr(key: String): String {
 // ---------- Persistence ----------
 object Store {
     private fun Event.toJson() = JSONObject().put("uid", uid).put("s", summary).put("l", location)
-        .put("st", start).put("e", end).put("h", hash).put("d", deleted).put("desc", desc).put("da", deletedAt)
+        .put("st", start).put("e", end).put("h", hash).put("d", deleted).put("desc", desc).put("da", deletedAt).put("src", source)
 
     private fun JSONObject.toEvent() = Event(
         getString("uid"),
@@ -165,7 +166,8 @@ object Store {
         optString("h", optString("hash")),
         optBoolean("d", optBoolean("deleted")),
         optString("desc", ""),
-        optLong("da", optLong("deletedAt", 0L))
+        optLong("da", optLong("deletedAt", 0L)),
+        optString("src", "kuleuven")
     )
 
     fun events(c: Context): List<Event> {
@@ -224,10 +226,15 @@ fun notify(c: Context, title: String, text: String, id: Int) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         nm.createNotificationChannel(NotificationChannel("lesstress", "LesStress", NotificationManager.IMPORTANCE_DEFAULT))
     }
+    val launchIntent = Intent(c, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+    }
+    val pi = PendingIntent.getActivity(c, id, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     val builder = Notification.Builder(c, "lesstress")
         .setSmallIcon(R.drawable.notification_icon_white)
         .setContentTitle(title)
         .setContentText(text)
+        .setContentIntent(pi)
         .setAutoCancel(true)
 
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
