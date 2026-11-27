@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.time.*
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -95,6 +96,77 @@ fun parseIcs(raw: String, source: String = "kuleuven"): List<Event> {
     return out
 }
 
+private val kulJsonFmt = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm")
+
+private fun toKulJsonUrl(url: String): String =
+    Regex("(?i)\\.ics(?=([?#].*)?$)").replace(url, ".json")
+
+fun parseKulJson(raw: String): List<Event> {
+    val root = JSONObject(raw)
+    val headers = root.optJSONArray("columnheaders") ?: return emptyList()
+    val res = root.optJSONArray("reservations") ?: return emptyList()
+
+    val idxByHeader = mutableMapOf<String, MutableList<Int>>()
+    for (i in 0 until headers.length()) {
+        val h = headers.optString(i).trim().lowercase()
+        idxByHeader.getOrPut(h) { mutableListOf() }.add(i)
+    }
+    fun col(cols: org.json.JSONArray, name: String, fallbackIdx: Int): String {
+        val indices = idxByHeader[name]
+        if (!indices.isNullOrEmpty()) {
+            for (idx in indices) {
+                val v = cols.optString(idx).trim()
+                if (v.isNotEmpty()) return v
+            }
+            return ""
+        }
+        return cols.optString(fallbackIdx).trim()
+    }
+
+    val out = mutableListOf<Event>()
+    for (i in 0 until res.length()) {
+        runCatching {
+            val r = res.getJSONObject(i)
+            val id = r.getString("id")
+            val st = LocalDateTime.parse("${r.getString("startdate")} ${r.getString("starttime")}", kulJsonFmt)
+                .atZone(zone).toInstant().toEpochMilli()
+            val en = LocalDateTime.parse("${r.getString("enddate")} ${r.getString("endtime")}", kulJsonFmt)
+                .atZone(zone).toInstant().toEpochMilli()
+            val cols = r.getJSONArray("columns")
+
+            val ola = col(cols, "ola", 0)
+            val titel = col(cols, "titel", 1)
+            val docent = col(cols, "docent", 2)
+            val ruimte = col(cols, "ruimte", 3).ifEmpty { col(cols, "ruimte (ouder)", 4) }
+            val eventTxt = col(cols, "event", 6)
+            val infoStud = col(cols, "info voor de student", 7)
+            val infoDoc = col(cols, "info docent aan student", 8)
+
+            val summary = listOf(ola, titel).filter { it.isNotEmpty() }.joinToString(", ")
+            val descLines = buildList {
+                if (docent.isNotEmpty() && !docent.equals("geen docent", ignoreCase = true)) add("DOCENT: $docent")
+                if (eventTxt.isNotEmpty()) add("EVENT: $eventTxt")
+                if (infoStud.isNotEmpty()) add("INFO: $infoStud")
+                if (infoDoc.isNotEmpty()) add("DOCENTINFO: $infoDoc")
+            }.joinToString("\n")
+
+            out += Event(
+                uid = id,
+                summary = summary,
+                location = ruimte,
+                start = st,
+                end = en,
+                hash = "$summary|$ruimte|$st|$en".hashCode().toString(),
+                deleted = false,
+                desc = descLines,
+                deletedAt = 0L,
+                source = "kuljson"
+            )
+        }
+    }
+    return out
+}
+
 /* =====================  2. SYNC + DELETION-OVERRIDE  ===================== */
 
 suspend fun syncCalendar(c: Context) {
@@ -110,41 +182,65 @@ suspend fun syncCalendar(c: Context) {
     val maxForwardMillis = forwardDays * 86_400_000L
 
     if (icsUrl.isNotBlank()) {
-        val fresh = parseIcs(httpGet(icsUrl), "kuleuven")
+        val jsonUrl = toKulJsonUrl(icsUrl)
+        val fresh = runCatching {
+            if (jsonUrl != icsUrl || icsUrl.contains(".json", ignoreCase = true)) {
+                parseKulJson(httpGet(jsonUrl))
+            } else emptyList()
+        }.getOrElse { emptyList() }.ifEmpty {
+            parseIcs(httpGet(icsUrl), "kuleuven")
+        }
+
         if (fresh.isNotEmpty()) {
-            val freshIds = fresh.map { it.uid }.toSet()
-            for (n in fresh) {
-                val old = saved[n.uid]
-                when {
-                    old == null -> saved[n.uid] = n
-                    else -> {
-                        saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
-                        val timeChanged = old.start != n.start || old.end != n.end
-                        val locChanged = old.location.trim() != n.location.trim()
-                        if ((timeChanged || locChanged) && !old.deleted) {
-                            Store.addChange(c, Change(now, old, n))
-                            if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
-                                notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
+            val freshSource = fresh.first().source
+            val migratingToJson = freshSource == "kuljson" && saved.values.any { it.source == "kuleuven" }
+
+            if (migratingToJson) {
+                val oldKul = saved.values.filter { it.source == "kuleuven" }
+                saved.entries.removeAll { it.value.source == "kuleuven" }
+                for (n in fresh) {
+                    val code = ID.find(n.summary)?.value
+                    val old = oldKul.firstOrNull { o ->
+                        o.start == n.start && o.end == n.end &&
+                            (if (code != null) ID.find(o.summary)?.value == code else o.summary.take(10) == n.summary.take(10))
+                    }
+                    saved[n.uid] = n.copy(deleted = old?.deleted ?: false, deletedAt = old?.deletedAt ?: 0L)
+                }
+            } else {
+                val freshIds = fresh.map { it.uid }.toSet()
+                for (n in fresh) {
+                    val old = saved[n.uid]
+                    when {
+                        old == null -> saved[n.uid] = n
+                        else -> {
+                            saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
+                            val timeChanged = old.start != n.start || old.end != n.end
+                            val locChanged = old.location.trim() != n.location.trim()
+                            if ((timeChanged || locChanged) && !old.deleted) {
+                                Store.addChange(c, Change(now, old, n))
+                                if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
+                                    notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
+                                }
                             }
                         }
                     }
                 }
-            }
-            val windowStart = fresh.minOf { it.start }
-            for (old in saved.values.toList()) {
-                if (old.source == "kuleuven" && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
-                    saved.remove(old.uid)
-                    if (!old.deleted) {
-                        Store.addChange(c, Change(now, old, null))
-                        if (changesNotif && (old.start - now) in 0..maxForwardMillis) {
-                            notify(c, old.summary.substringBefore(","), "⚠ " + tr("changes"), old.uid.hashCode() + 1)
+                val windowStart = fresh.minOf { it.start }
+                for (old in saved.values.toList()) {
+                    if ((old.source == "kuleuven" || old.source == "kuljson") && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
+                        saved.remove(old.uid)
+                        if (!old.deleted) {
+                            Store.addChange(c, Change(now, old, null))
+                            if (changesNotif && (old.start - now) in 0..maxForwardMillis) {
+                                notify(c, old.summary.substringBefore(","), "⚠ " + tr("changes"), old.uid.hashCode() + 1)
+                            }
                         }
                     }
                 }
             }
         }
     } else {
-        saved.entries.removeAll { it.value.source == "kuleuven" }
+        saved.entries.removeAll { it.value.source == "kuleuven" || it.value.source == "kuljson" }
     }
 
     if (ics2Url.isNotBlank()) {
@@ -170,7 +266,7 @@ private val ID = Regex("[A-Z]\\d\\d[A-Z]\\d[a-z]")
 
 /** Only a stable key for the per-course colour preference (e.g. U00K1a). Never shown. */
 private fun Event.courseId() =
-    if (source != "kuleuven") "extra_${summary.take(12)}"
+    if (source == "extra") "extra_calendar"
     else ID.find(summary)?.value ?: summary.take(6)
 
 private class Parsed(
@@ -203,7 +299,7 @@ private fun looksLikeName(t: String) = !Regex("[\\d:=()]").containsMatchIn(t) &&
  * field or is a known code/label; anything else is appended to lesinfo (prefixed with a warning sign).
  */
 private fun splitEvent(e: Event): Parsed {
-    if (e.source != "kuleuven") {
+    if (e.source == "extra") {
         return Parsed(
             vak = listOf(e.summary.ifBlank { t2("Afspraak", "Event") }),
             soort = "",
@@ -213,6 +309,30 @@ private fun splitEvent(e: Event): Parsed {
             teachers = emptyList(),
             overig = ""
         )
+    }
+    if (e.source == "kuljson") {
+        val vak = commaParts(e.summary).map { part ->
+            val head = part.split(WS, limit = 2)
+            if (head.size == 2 && CODE_RE.matches(head[0])) head[1] else part
+        }
+        val teachers = mutableListOf<String>()
+        val groups = mutableListOf<String>()
+        val lesinfo = mutableListOf<String>()
+        for (line in e.desc.lines()) {
+            val valPart = line.substringAfter(": ", "").trim()
+            if (valPart.isEmpty()) continue
+            when {
+                line.startsWith("DOCENT: ") -> teachers += commaParts(valPart)
+                line.startsWith("EVENT: ") || line.startsWith("INFO: ") || line.startsWith("DOCENTINFO: ") -> {
+                    if (GROUP_RE.containsMatchIn(valPart)) groups += valPart else lesinfo += valPart
+                }
+            }
+        }
+        val rooms = commaParts(e.location).map { r ->
+            val m = ROOM_CODE_RE.find(r)
+            if (m != null && m.range.first > 0) r.removeRange(m.range).trim() else r
+        }
+        return Parsed(vak, "", lesinfo.distinct().joinToString(", "), groups.distinct().joinToString(" | "), rooms, teachers, "")
     }
     val vak = mutableListOf<String>()
     val teachers = mutableListOf<String>()
