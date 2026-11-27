@@ -182,21 +182,10 @@ suspend fun syncCalendar(c: Context) {
     val maxForwardMillis = forwardDays * 86_400_000L
 
     if (icsUrl.isNotBlank()) {
-        val jsonUrl = toKulJsonUrl(icsUrl)
-        val fresh = runCatching {
-            if (jsonUrl != icsUrl || icsUrl.contains(".json", ignoreCase = true)) {
-                parseKulJson(httpGet(jsonUrl))
-            } else emptyList()
-        }.getOrElse { emptyList() }.ifEmpty {
-            parseIcs(httpGet(icsUrl), "kuleuven")
-        }
-
+        val fresh = parseKulJson(httpGet(toKulJsonUrl(icsUrl)))
         if (fresh.isNotEmpty()) {
-            val freshSource = fresh.first().source
-            val migratingToJson = freshSource == "kuljson" && saved.values.any { it.source == "kuleuven" }
-
-            if (migratingToJson) {
-                val oldKul = saved.values.filter { it.source == "kuleuven" }
+            val oldKul = saved.values.filter { it.source == "kuleuven" }
+            if (oldKul.isNotEmpty()) {
                 saved.entries.removeAll { it.value.source == "kuleuven" }
                 for (n in fresh) {
                     val code = ID.find(n.summary)?.value
@@ -210,24 +199,21 @@ suspend fun syncCalendar(c: Context) {
                 val freshIds = fresh.map { it.uid }.toSet()
                 for (n in fresh) {
                     val old = saved[n.uid]
-                    when {
-                        old == null -> saved[n.uid] = n
-                        else -> {
-                            saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
-                            val timeChanged = old.start != n.start || old.end != n.end
-                            val locChanged = old.location.trim() != n.location.trim()
-                            if ((timeChanged || locChanged) && !old.deleted) {
-                                Store.addChange(c, Change(now, old, n))
-                                if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
-                                    notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
-                                }
+                    if (old == null) saved[n.uid] = n
+                    else {
+                        saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
+                        val changed = old.start != n.start || old.end != n.end || old.location.trim() != n.location.trim()
+                        if (changed && !old.deleted) {
+                            Store.addChange(c, Change(now, old, n))
+                            if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
+                                notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
                             }
                         }
                     }
                 }
                 val windowStart = fresh.minOf { it.start }
                 for (old in saved.values.toList()) {
-                    if ((old.source == "kuleuven" || old.source == "kuljson") && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
+                    if (old.source == "kuljson" && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
                         saved.remove(old.uid)
                         if (!old.deleted) {
                             Store.addChange(c, Change(now, old, null))
@@ -260,7 +246,7 @@ suspend fun syncCalendar(c: Context) {
     scheduleAlarms(c, all)
 }
 
-/* =====================  3. FIELD SPLITTING (no text may get lost)  ===================== */
+/* =====================  3. FIELD SPLITTING  ===================== */
 
 private val ID = Regex("[A-Z]\\d\\d[A-Z]\\d[a-z]")
 
@@ -280,24 +266,12 @@ private class Parsed(
 )
 
 private val WS = Regex("\\s+")
-private val WORD_RE = Regex("[\\p{L}\\p{N}]+")
 private val CODE_RE = Regex("^[A-Za-z]{1,3}\\d{2,}[A-Za-z0-9]*$")                 // U00K1a
-private val TYPE_NUM_RE = Regex("^\\d{1,2}\\s+\\S.*")                               // "02 Practicum"
-private val TYPE_ALPHA_RE = Regex("^[A-Z]{2,3}\\s+\\S.*")                           // "EC Examen"
 private val GROUP_RE = Regex("(?i)\\b(groep|group|gr)\\s*[A-Z]?\\d*\\b")
-private val GROUP_IN_TEXT_RE = Regex(
-    "(?i)\\b(?:groep|group|gr)\\s*[A-Z]?\\d+(?:\\s*[+&]\\s*[A-Z]?\\d+)*|\\b(?:groep|group|gr)\\s+[A-Z]\\b")
-private val DESC_ID_RE = Regex("^ID\\s+\\S+$")
 private val ROOM_CODE_RE = Regex("\\s+[A-Za-z]{1,5}\\.\\d{2}\\.\\d{4}\\s*$")
 
-private fun words(s: String): Set<String> = WORD_RE.findAll(s.lowercase()).map { it.value }.toSet()
 private fun commaParts(s: String) = s.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-private fun looksLikeName(t: String) = !Regex("[\\d:=()]").containsMatchIn(t) && t.split(WS).size in 1..8
 
-/**
- * Splits SUMMARY / LOCATION / DESCRIPTION into fields. Every word of the source either lands in a
- * field or is a known code/label; anything else is appended to lesinfo (prefixed with a warning sign).
- */
 private fun splitEvent(e: Event): Parsed {
     if (e.source == "extra") {
         return Parsed(
@@ -310,118 +284,28 @@ private fun splitEvent(e: Event): Parsed {
             overig = ""
         )
     }
-    if (e.source == "kuljson") {
-        val vak = commaParts(e.summary).map { part ->
-            val head = part.split(WS, limit = 2)
-            if (head.size == 2 && CODE_RE.matches(head[0])) head[1] else part
-        }
-        val teachers = mutableListOf<String>()
-        val groups = mutableListOf<String>()
-        val lesinfo = mutableListOf<String>()
-        for (line in e.desc.lines()) {
-            val valPart = line.substringAfter(": ", "").trim()
-            if (valPart.isEmpty()) continue
-            when {
-                line.startsWith("DOCENT: ") -> teachers += commaParts(valPart)
-                line.startsWith("EVENT: ") || line.startsWith("INFO: ") || line.startsWith("DOCENTINFO: ") -> {
-                    if (GROUP_RE.containsMatchIn(valPart)) groups += valPart else lesinfo += valPart
-                }
-            }
-        }
-        val rooms = commaParts(e.location).map { r ->
-            val m = ROOM_CODE_RE.find(r)
-            if (m != null && m.range.first > 0) r.removeRange(m.range).trim() else r
-        }
-        return Parsed(vak, "", lesinfo.distinct().joinToString(", "), groups.distinct().joinToString(" | "), rooms, teachers, "")
+    val vak = commaParts(e.summary).map { part ->
+        val head = part.split(WS, limit = 2)
+        if (head.size == 2 && CODE_RE.matches(head[0])) head[1] else part
     }
-    val vak = mutableListOf<String>()
     val teachers = mutableListOf<String>()
-    val lesinfo = mutableListOf<String>()
     val groups = mutableListOf<String>()
-    var soort = ""
-    val ignored = mutableSetOf("info", "id")          // labels and codes that are hidden on purpose
-
-    // ---- SUMMARY: "CODE Vak: sublabel, [prof, ...], NN Soort, [info: ..., vrije tekst ...]"
-    val tokens = commaParts(e.summary)
-    if (tokens.isNotEmpty()) {
-        val head = tokens[0].split(WS, limit = 2)
-        if (head.size == 2 && CODE_RE.matches(head[0])) { ignored += words(head[0]); vak.add(head[1]) } else vak.add(tokens[0])
-
-        val rest = tokens.drop(1)
-        var ti = rest.indexOfFirst { TYPE_NUM_RE.matches(it) }
-        if (ti < 0) ti = rest.indexOfFirst { TYPE_ALPHA_RE.matches(it) }
-        val pre = if (ti >= 0) rest.take(ti) else rest
-        val post = if (ti >= 0) rest.drop(ti + 1).toMutableList() else mutableListOf()
-        if (ti >= 0) { val t = rest[ti].split(WS, limit = 2); ignored += words(t[0]); soort = t[1] }
-
-        var infoAt = 0
-        for (t in pre) {
-            val tw = t.split(WS, limit = 2)
-            when {
-                tw.size == 2 && CODE_RE.matches(tw[0]) -> { ignored += words(tw[0]); vak.add(tw[1]) }   // 2nd course code
-                t.startsWith("info:", ignoreCase = true) -> post.add(infoAt++, t)
-                looksLikeName(t) -> teachers.add(t)
-                else -> lesinfo.add(t)
+    val lesinfo = mutableListOf<String>()
+    for (line in e.desc.lines()) {
+        val valPart = line.substringAfter(": ", "").trim()
+        if (valPart.isEmpty()) continue
+        when {
+            line.startsWith("DOCENT: ") -> teachers += commaParts(valPart)
+            line.startsWith("EVENT: ") || line.startsWith("INFO: ") || line.startsWith("DOCENTINFO: ") -> {
+                if (GROUP_RE.containsMatchIn(valPart)) groups += valPart else lesinfo += valPart
             }
         }
-
-        val infoPlain = mutableListOf<String>()
-        val free = mutableListOf<String>()
-        for (t in post) {
-            if (t.startsWith("info:", ignoreCase = true)) {
-                val body = t.substring(5).trim()
-                if (body.isNotEmpty()) { if (GROUP_RE.containsMatchIn(body)) groups.add(body) else infoPlain.add(body) }
-            } else free.add(t)
-        }
-        lesinfo.addAll(infoPlain); lesinfo.addAll(free)
     }
-
-    // ---- DESCRIPTION ("U00K1a_groep B2", "U00F8a HC", "ID 123") -> "overig":
-    //      course codes, the ID line and years 2020..now are removed, everything else stays visible
-    val thisYear = LocalDate.now(zone).year
-    val descGroups = mutableListOf<String>()
-    val overigRaw = mutableListOf<String>()
-    for (raw in e.desc.lines()) {
-        val line = raw.trim()
-        if (line.isEmpty()) continue
-        if (DESC_ID_RE.matches(line)) { ignored += words(line); continue }
-        for (part in commaParts(line)) {
-            val kept = mutableListOf<String>()
-            for (tok0 in part.split(WS)) {
-                var tok = tok0
-                val us = tok.indexOf('_')
-                if (us > 0 && CODE_RE.matches(tok.substring(0, us))) { ignored += words(tok.substring(0, us)); tok = tok.substring(us + 1) }
-                if (tok.isEmpty()) continue
-                if (CODE_RE.matches(tok)) { ignored += words(tok); continue }
-                if (tok.length == 4 && tok.all { it.isDigit() } && tok.toInt() in 2020..thisYear) { ignored += words(tok); continue }
-                kept.add(tok)
-            }
-            val text = kept.joinToString(" ")
-            if (text.isNotEmpty()) { overigRaw.add(text); if (GROUP_RE.containsMatchIn(text)) descGroups.add(text) }
-        }
-    }
-
-    // ---- group: from "info:" items, else from free lesinfo ("groep 1: ...", "(groep B3)"), else from DESCRIPTION
-    if (groups.isEmpty()) {
-        val found = GROUP_IN_TEXT_RE.findAll(lesinfo.joinToString(" , ")).map { it.value }.distinct().toList()
-        groups.addAll(found.ifEmpty { descGroups.distinct() })
-    }
-    val overigShown = overigRaw.distinct()
-
-    // room names without the long trailing building code (e.g. "C.00.0611"); the code stays visible in the raw view
     val rooms = commaParts(e.location).map { r ->
         val m = ROOM_CODE_RE.find(r)
-        if (m != null && m.range.first > 0) { ignored += words(m.value); r.removeRange(m.range).trim() } else r
+        if (m != null && m.range.first > 0) r.removeRange(m.range).trim() else r
     }
-
-    // ---- safety net: any source word that is not displayed (or a known code/label) is shown in lesinfo
-    val shown = words((vak + soort + lesinfo + groups + rooms + teachers + overigShown).joinToString(" ")) + ignored
-    val src = e.summary + " " + e.location + " " + e.desc
-    val missing = WORD_RE.findAll(src).map { it.value }.filter { it.lowercase() !in shown }.distinct().toList()
-    if (missing.isNotEmpty()) lesinfo.add("⚠ " + missing.joinToString(" "))
-
-    return Parsed(vak, soort, lesinfo.joinToString(", "), groups.joinToString(" | "),
-        rooms, teachers, overigShown.joinToString(" | "))
+    return Parsed(vak, "", lesinfo.distinct().joinToString(", "), groups.distinct().joinToString(" | "), rooms, teachers, "")
 }
 
 private val parsedCache = java.util.concurrent.ConcurrentHashMap<String, Parsed>()
