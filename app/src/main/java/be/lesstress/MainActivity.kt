@@ -205,7 +205,13 @@ object Store {
     }
 }
 
-suspend fun httpGet(url: String): String = withContext(Dispatchers.IO) { URL(url).readText() }
+suspend fun httpGet(url: String): String = withContext(Dispatchers.IO) {
+    (URL(url).openConnection() as java.net.HttpURLConnection).apply {
+        connectTimeout = 10_000
+        readTimeout = 15_000
+        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) LesStress")
+    }.inputStream.bufferedReader().use { it.readText() }
+}
 
 // ---------- Background Sync & Notifications ----------
 class SyncWorker(c: Context, p: WorkerParameters) : CoroutineWorker(c, p) {
@@ -255,7 +261,8 @@ fun scheduleAlarms(c: Context, events: List<Event>) {
     val lead = c.prefs.getInt("lead", 5) * 60_000L
     val now = System.currentTimeMillis()
     for (e in events) {
-        val intent = Intent(c, AlarmReceiver::class.java).putExtra("title", e.summary).putExtra("text", e.location).putExtra("id", e.uid.hashCode())
+        val title = e.summary.substringBefore(",")
+        val intent = Intent(c, AlarmReceiver::class.java).putExtra("title", title).putExtra("text", e.location).putExtra("id", e.uid.hashCode())
         val pi = PendingIntent.getBroadcast(c, e.uid.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         if (!lessonsEnabled || e.deleted || e.start - lead < now) am.cancel(pi)
         else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, e.start - lead, pi)

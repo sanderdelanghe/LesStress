@@ -96,7 +96,7 @@ fun parseIcs(raw: String, source: String = "kuleuven"): List<Event> {
     return out
 }
 
-private val kulJsonFmt = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm")
+private val kulJsonFmt = DateTimeFormatter.ofPattern("[d][dd]-[M][MM]-yyyy [H][HH]:[m][mm]")
 
 private fun toKulJsonUrl(url: String): String =
     Regex("(?i)\\.ics(?=([?#].*)?$)").replace(url, ".json")

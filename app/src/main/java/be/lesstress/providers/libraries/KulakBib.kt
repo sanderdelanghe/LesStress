@@ -30,7 +30,13 @@ object KulakBib : LibraryProvider {
     override val checkInAction = LibraryCheckInAction(seatOffset = 401629)
 
     override suspend fun fetchData(): LibraryData {
-        val jsonStr = withContext(Dispatchers.IO) { URL(LIB_API).readText() }
+        val jsonStr = withContext(Dispatchers.IO) {
+            (URL(LIB_API).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 10_000
+                readTimeout = 15_000
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) LesStress")
+            }.inputStream.bufferedReader().use { it.readText() }
+        }
         val j = JSONObject(jsonStr)
         val occ = if (j.has("occupancy") && j.has("zitjes")) {
             LibraryOccupancy(j.optInt("occupancy"), j.optInt("zitjes"))
