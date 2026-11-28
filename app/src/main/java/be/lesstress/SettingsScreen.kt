@@ -1,8 +1,12 @@
 package be.lesstress
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,6 +28,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import be.lesstress.providers.*
 import java.io.File
 import kotlinx.coroutines.launch
@@ -174,6 +179,10 @@ private fun ScheduleSettingsSection(ctx: Context, onOpenRemoved: () -> Unit) {
                             } else {
                                 syncCalendar(ctx)
                                 AppState.version++
+                                // Also push to dedicated Google Calendar if enabled
+                                if (CalendarSyncManager.isSyncEnabled(ctx)) {
+                                    CalendarSyncManager.syncEvents(ctx, Store.events(ctx))
+                                }
                                 s("Gesynchroniseerd!", "Synced!")
                             }
                         } catch (e: Exception) {
@@ -214,6 +223,8 @@ private fun ScheduleSettingsSection(ctx: Context, onOpenRemoved: () -> Unit) {
             }
         }
     }
+
+    GoogleCalendarSyncSection(ctx)
 
     SectionHeader(tr("removed_lessons"))
 
@@ -567,6 +578,233 @@ private fun AppUpdaterSection(ctx: Context) {
                         Text(s("Sta app-installaties toe in Instellingen", "Allow app installs in Settings"))
                     }
                 }
+            }
+        }
+    }
+}
+
+// ── Google Calendar Sync ──────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GoogleCalendarSyncSection(ctx: Context) {
+    val scope = rememberCoroutineScope()
+
+    var enabled by remember { mutableStateOf(CalendarSyncManager.isSyncEnabled(ctx)) }
+    var selectedAccount by remember { mutableStateOf(CalendarSyncManager.getSyncAccount(ctx)) }
+    var accounts by remember { mutableStateOf<List<String>>(emptyList()) }
+    var expanded by remember { mutableStateOf(false) }
+    var syncMsg by remember { mutableStateOf<String?>(null) }
+    var isSyncing by remember { mutableStateOf(false) }
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasPermission = results.values.all { it }
+        if (hasPermission) {
+            accounts = CalendarSyncManager.availableAccounts(ctx)
+        }
+    }
+
+    // Load accounts once permissions are known to be granted
+    LaunchedEffect(hasPermission) {
+        if (hasPermission) accounts = CalendarSyncManager.availableAccounts(ctx)
+    }
+
+    SectionHeader(s("Google Agenda\u00ADsync", "Google Calendar Sync"))
+
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+
+            // Enable toggle
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.CalendarMonth,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    s("Synchroniseer met Google Agenda", "Sync to Google Calendar"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = { checked ->
+                        if (checked && !hasPermission) {
+                            permLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.READ_CALENDAR,
+                                    Manifest.permission.WRITE_CALENDAR
+                                )
+                            )
+                        } else {
+                            enabled = checked
+                            CalendarSyncManager.setSyncEnabled(ctx, checked)
+                            if (!checked) syncMsg = null
+                        }
+                    }
+                )
+            }
+
+            if (enabled) {
+                if (!hasPermission) {
+                    // Show permission rationale
+                    Text(
+                        s(
+                            "Kalender-toegang vereist om te synchroniseren.",
+                            "Calendar access is required to sync."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            permLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.READ_CALENDAR,
+                                    Manifest.permission.WRITE_CALENDAR
+                                )
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Lock, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(s("Toestemming verlenen", "Grant permission"))
+                    }
+                } else {
+                    HorizontalDivider(thickness = 0.5.dp)
+
+                    // Account picker
+                    Text(
+                        s("Google-account voor agenda:", "Google account for calendar:"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (accounts.isEmpty()) {
+                        Text(
+                            s(
+                                "Geen Google-accounts gevonden. Voeg een account toe in apparaatinstellingen.",
+                                "No Google accounts found. Add an account in device settings."
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else {
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = !expanded }
+                        ) {
+                            OutlinedTextField(
+                                value = selectedAccount ?: s("Kies account…", "Choose account…"),
+                                onValueChange = {},
+                                readOnly = true,
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                            )
+                            ExposedDropdownMenu(
+                                expanded = expanded,
+                                onDismissRequest = { expanded = false }
+                            ) {
+                                accounts.forEach { account ->
+                                    DropdownMenuItem(
+                                        text = { Text(account) },
+                                        onClick = {
+                                            selectedAccount = account
+                                            CalendarSyncManager.setSyncAccount(ctx, account)
+                                            expanded = false
+                                            syncMsg = null
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Sync now button
+                    if (selectedAccount != null) {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    isSyncing = true
+                                    syncMsg = try {
+                                        CalendarSyncManager.syncEvents(ctx, Store.events(ctx))
+                                        s("✓ Gesynchroniseerd met Google Agenda!", "✓ Synced to Google Calendar!")
+                                    } catch (e: Exception) {
+                                        "⚠ " + (e.message ?: s("Sync mislukt", "Sync failed"))
+                                    } finally {
+                                        isSyncing = false
+                                    }
+                                }
+                            },
+                            enabled = !isSyncing,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (isSyncing) {
+                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(Modifier.width(8.dp))
+                            } else {
+                                Icon(Icons.Filled.Sync, contentDescription = null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(s("Nu synchroniseren", "Sync now"))
+                        }
+
+                        // Disconnect button
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    CalendarSyncManager.clearAllSyncedEvents(ctx)
+                                    CalendarSyncManager.setSyncEnabled(ctx, false)
+                                    enabled = false
+                                    selectedAccount = null
+                                    syncMsg = s("Ontkoppeld. Agenda-items verwijderd.", "Disconnected. Calendar events removed.")
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Icon(Icons.Filled.LinkOff, contentDescription = null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(s("Ontkoppelen", "Disconnect"))
+                        }
+                    }
+
+                    syncMsg?.let { msg ->
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (msg.startsWith("⚠")) RED else GREEN
+                        )
+                    }
+                }
+
+                Text(
+                    s(
+                        "Synchroniseert KU Leuven-lessen naar een aparte \"LesStress\" agenda. Nooit naar je hoofd-agenda.",
+                        "Syncs KU Leuven lessons to a separate \"LesStress\" calendar. Never to your main calendar."
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

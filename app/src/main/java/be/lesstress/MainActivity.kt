@@ -218,6 +218,9 @@ suspend fun httpGet(url: String): String = withContext(Dispatchers.IO) {
 class SyncWorker(c: Context, p: WorkerParameters) : CoroutineWorker(c, p) {
     override suspend fun doWork(): Result = runCatching {
         syncCalendar(applicationContext)
+        if (CalendarSyncManager.isSyncEnabled(applicationContext)) {
+            CalendarSyncManager.syncEvents(applicationContext, Store.events(applicationContext))
+        }
         Result.success()
     }.getOrDefault(Result.retry())
 }
@@ -355,7 +358,15 @@ class MainActivity : ComponentActivity() {
         AppState.load(this)
         intent?.getStringExtra("open_event_uid")?.let { AppState.pendingEventUid = it }
         ensureNotificationChannel(this)
+        // Notification permission (Android 13+)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        // Calendar permissions for Google Calendar sync (Android 6+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val calPerms = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+            if (calPerms.any { checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+                requestPermissions(calPerms, 2)
+            }
+        }
         schedulePeriodicSync(this)
         setContent { LesStressTheme { AppRoot() } }
     }
@@ -368,7 +379,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        lifecycleScope.launch { runCatching { syncCalendar(this@MainActivity) }; AppState.version++ }
+        lifecycleScope.launch {
+            runCatching { syncCalendar(this@MainActivity) }
+            AppState.version++
+            if (CalendarSyncManager.isSyncEnabled(this@MainActivity)) {
+                runCatching { CalendarSyncManager.syncEvents(this@MainActivity, Store.events(this@MainActivity)) }
+            }
+        }
     }
 }
 
