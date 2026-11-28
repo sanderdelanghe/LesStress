@@ -1,7 +1,5 @@
 package be.lesstress
 
-// LibraryTab.kt = KBIB live occupancy, expandable opening hours, KURT reservations & seat check-in.
-
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.animateContentSize
@@ -24,40 +22,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
+import be.lesstress.providers.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.URL
-import java.time.*
-import java.time.format.DateTimeFormatter
+import java.time.Duration
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
 
-const val LIB_API = "https://bib.kuleuven.be/apps/ub/blokkeninleuven/api/libraries/kbib"
-const val KURT_URL = "https://kurt3.ghum.kuleuven.be/locations/15"
-fun seatUrl(seat: Int) = "https://kuleuven.be/kurtqr?id=${seat + 401629}"
-
 private val brussels = ZoneId.of("Europe/Brussels")
-
-private data class LibRow(val date: LocalDate, val open: LocalTime?, val close: LocalTime?)
-
-private fun parseTime(str: String): LocalTime? {
-    if (str.isBlank()) return null
-    val p = str.replace(':', '.').split('.')
-    return if (p.size == 2) LocalTime.of(p[0].toIntOrNull() ?: return null, p[1].toIntOrNull() ?: return null) else null
-}
-
-private fun parseLibHours(j: JSONObject): List<LibRow> {
-    val hrs = j.optJSONObject("hours") ?: return emptyList()
-    val dtf = DateTimeFormatter.BASIC_ISO_DATE
-    return hrs.keys().asSequence().mapNotNull { k ->
-        val obj = hrs.getJSONObject(k)
-        val dStr = obj.optString("date")
-        if (dStr.length == 8) LibRow(LocalDate.parse(dStr, dtf), parseTime(obj.optString("begin")), parseTime(obj.optString("einde"))) else null
-    }.sortedBy { it.date }.toList()
-}
 
 private fun computeLibStatus(rows: List<LibRow>, now: LocalDateTime, loc: Locale): Status? {
     if (rows.isEmpty()) return null
@@ -78,43 +52,70 @@ private fun computeLibStatus(rows: List<LibRow>, now: LocalDateTime, loc: Locale
 
 @Composable
 fun LibraryTab() {
-    val ctx = LocalContext.current; val loc = appLocale()
+    val ctx = LocalContext.current
+    val loc = appLocale()
     var reload by remember { mutableIntStateOf(0) }
     var now by remember { mutableStateOf(LocalDateTime.now(brussels)) }
-
-    var occupied by remember { mutableStateOf<Int?>(null) }
-    var capacity by remember { mutableStateOf(0) }
-    var hoursList by remember { mutableStateOf<List<LibRow>>(emptyList()) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var seat by remember { mutableStateOf("") }
-
     LaunchedEffect(Unit) { while (isActive) { delay(30_000); now = LocalDateTime.now(brussels) } }
 
-    LaunchedEffect(AppState.version, reload) {
-        while (isActive) {
-            try {
-                val jsonStr = withContext(Dispatchers.IO) { URL(LIB_API).readText() }
-                val j = JSONObject(jsonStr)
-                occupied = j.optInt("occupancy"); capacity = j.optInt("zitjes")
-                hoursList = parseLibHours(j); error = null
-            } catch (e: Exception) { error = e.message } finally { loading = false }
-            delay(60_000)
-        }
-    }
-
+    val providers = remember(AppState.version) { LibraryProviderRegistry.activeOrdered(ctx) }
     fun launchUrl(url: String) = runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(s("Bibliotheek KBIB", "Library KBIB"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(tr("library"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             IconButton({ reload++ }, Modifier.size(36.dp)) { Icon(Icons.Filled.Refresh, contentDescription = s("Vernieuwen", "Refresh"), Modifier.size(20.dp)) }
         }
 
-        // Kaart 1: Bezetting & Openingsuren
-        LibVenueCard(occupied, capacity, hoursList, now, loc, loading, error)
+        if (providers.isEmpty()) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Text(
+                    s("Geen bibliotheken ingeschakeld. Schakel aanbieders in via Instellingen.", "No library providers enabled. Enable providers in Settings."),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        } else {
+            providers.forEach { provider ->
+                key(provider.id) {
+                    LibraryProviderBlock(provider, now, loc, reload, ::launchUrl)
+                }
+            }
+        }
+    }
+}
 
-        // Kaart 2: Materiaal & Plekken (KURT)
+@Composable
+private fun LibraryProviderBlock(
+    provider: LibraryProvider,
+    now: LocalDateTime,
+    loc: Locale,
+    reload: Int,
+    onLaunch: (String) -> Unit
+) {
+    var data by remember(provider.id) { mutableStateOf<LibraryData?>(null) }
+    var error by remember(provider.id) { mutableStateOf<String?>(null) }
+    var loading by remember(provider.id) { mutableStateOf(true) }
+    var seat by remember(provider.id) { mutableStateOf("") }
+
+    LaunchedEffect(provider.id, AppState.version, reload) {
+        while (isActive) {
+            try {
+                data = provider.fetchData()
+                error = null
+            } catch (e: Exception) {
+                error = e.message ?: "Error"
+            } finally {
+                loading = false
+            }
+            delay(60_000)
+        }
+    }
+
+    LibVenueCard(provider.displayName(), data, now, loc, loading, error)
+
+    provider.bookAction?.let { book ->
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,14 +123,14 @@ fun LibraryTab() {
                     Spacer(Modifier.width(8.dp))
                     Text(s("Materiaal & Plekken", "Material & Spaces"), style = MaterialTheme.typography.titleMedium)
                 }
-                Text(s("Reserveer een lokaal, studieplek of materiaal via KURT.", "Reserve a room, study space or material via KURT."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button({ launchUrl(KURT_URL) }, Modifier.fillMaxWidth().height(44.dp)) {
-                    Text(s("Reserveren via KURT", "Reserve via KURT"), style = MaterialTheme.typography.titleSmall)
+                Button({ onLaunch(book.url) }, Modifier.fillMaxWidth().height(44.dp)) {
+                    Text(book.label(), style = MaterialTheme.typography.titleSmall)
                 }
             }
         }
+    }
 
-        // Kaart 3: Zitplaats inchecken (QR)
+    provider.checkInAction?.let { checkIn ->
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -148,7 +149,7 @@ fun LibraryTab() {
                         modifier = Modifier.weight(1f)
                     )
                     Button(
-                        onClick = { seat.toIntOrNull()?.let { launchUrl(seatUrl(it)) } },
+                        onClick = { seat.toIntOrNull()?.let { onLaunch(checkIn.urlForSeat(it)) } },
                         enabled = seat.isNotEmpty(),
                         modifier = Modifier.height(56.dp)
                     ) { Text(tr("checkin")) }
@@ -159,27 +160,35 @@ fun LibraryTab() {
 }
 
 @Composable
-private fun LibVenueCard(occupied: Int?, capacity: Int, hours: List<LibRow>, now: LocalDateTime, loc: Locale, loading: Boolean, error: String?) {
+private fun LibVenueCard(
+    title: String,
+    data: LibraryData?,
+    now: LocalDateTime,
+    loc: Locale,
+    loading: Boolean,
+    error: String?
+) {
     val cs = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(false) }
+    val hours = data?.hours.orEmpty()
     val status = computeLibStatus(hours, now, loc)
 
     Card(Modifier.fillMaxWidth().animateContentSize(), colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(s("Bezetting & Openingsuren", "Occupancy & Hours"), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 if (status != null) StatusPill(status) else if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
             }
             if (status != null) Text(status.detail, color = fg(status.kind), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
             if (error != null) Text("⚠ $error", color = RED, style = MaterialTheme.typography.bodySmall)
 
-            occupied?.let { occ ->
-                val ratio = if (capacity > 0) (occ.toFloat() / capacity).coerceIn(0f, 1f) else 0f
+            data?.occupancy?.let { occ ->
+                val ratio = if (occ.capacity > 0) (occ.occupied.toFloat() / occ.capacity).coerceIn(0f, 1f) else 0f
                 val percent = (ratio * 100).toInt()
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(Modifier.fillMaxWidth()) {
-                        Text(s("Bezetting", "Occupancy"), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
-                        Text("$occ / $capacity ($percent%)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        Text(tr("occupancy"), style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text("${occ.occupied} / ${occ.capacity} ($percent%)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                     }
                     LinearProgressIndicator(progress = { ratio }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)), color = if (ratio > 0.85f) RED else cs.primary)
                 }
