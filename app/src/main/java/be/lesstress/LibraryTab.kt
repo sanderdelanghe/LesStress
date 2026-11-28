@@ -167,12 +167,9 @@ private fun LibraryProviderBlock(
     provider.bookAction?.let { book ->
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                OutlinedButton({ onLaunch(book.url) }, Modifier.fillMaxWidth().height(44.dp)) {
+                    Icon(Icons.Filled.DateRange, contentDescription = null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(s("Materiaal & Plekken", "Material & Spaces"), style = MaterialTheme.typography.titleMedium)
-                }
-                Button({ onLaunch(book.url) }, Modifier.fillMaxWidth().height(44.dp)) {
                     Text(book.label(), style = MaterialTheme.typography.titleSmall)
                 }
             }

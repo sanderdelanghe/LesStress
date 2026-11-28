@@ -23,25 +23,58 @@ data class ReleaseInfo(
 object AppUpdater {
     private const val REPO = "sanderdelanghe/LesStress"
     private const val LATEST_API = "https://api.github.com/repos/$REPO/releases/latest"
+    private const val PREFS_LAST_CHECK = "updater_last_check"
+    private const val PREFS_CACHED_TAG = "updater_cached_tag"
+    private const val PREFS_CACHED_URL = "updater_cached_url"
+    private const val PREFS_CACHED_NOTES = "updater_cached_notes"
+    private const val CHECK_COOLDOWN_MS = 6 * 3600 * 1000L // 6 hours
 
     fun currentVersion(c: Context): String = runCatching {
         @Suppress("DEPRECATION")
         c.packageManager.getPackageInfo(c.packageName, 0).versionName
     }.getOrNull() ?: "0.0"
 
+    fun getCachedRelease(c: Context): ReleaseInfo? {
+        val tag = c.prefs.getString(PREFS_CACHED_TAG, null) ?: return null
+        val url = c.prefs.getString(PREFS_CACHED_URL, "") ?: ""
+        val notes = c.prefs.getString(PREFS_CACHED_NOTES, "") ?: ""
+        return ReleaseInfo(tag = tag, versionName = tag.trimStart('v', 'V'), apkUrl = url, notes = notes)
+    }
+
     fun isNewerVersion(remote: String, current: String): Boolean {
-        val r = remote.trimStart('v', 'V').split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
-        val c = current.trimStart('v', 'V').split('.').map { it.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
-        val maxLen = maxOf(r.size, c.size)
+        // Normalise: strip leading v/V, then split on dots and dashes to get segments
+        fun segments(v: String): List<String> =
+            v.trimStart('v', 'V').replace('-', '.').split('.')
+
+        fun segValue(s: String): Int = s.takeWhile(Char::isDigit).toIntOrNull() ?: -1
+        fun isPreRelease(s: String) = s.any { it.isLetter() } // e.g. "alpha", "beta", "rc"
+
+        val rs = segments(remote)
+        val cs = segments(current)
+        val maxLen = maxOf(rs.size, cs.size)
         for (i in 0 until maxLen) {
-            val rv = r.getOrElse(i) { 0 }
-            val cv = c.getOrElse(i) { 0 }
+            val r = rs.getOrElse(i) { "" }
+            val c = cs.getOrElse(i) { "" }
+            if (r == c) continue
+            val rv = segValue(r); val cv = segValue(c)
             if (rv != cv) return rv > cv
+            // Same numeric part but different pre-release labels — compare lexicographically
+            if (isPreRelease(r) && isPreRelease(c)) return r > c
+            if (isPreRelease(r)) return false // pre-release < release
+            if (isPreRelease(c)) return true  // release > pre-release
         }
         return false
     }
 
-    suspend fun checkLatestRelease(): ReleaseInfo = withContext(Dispatchers.IO) {
+    suspend fun checkLatestRelease(c: Context? = null, force: Boolean = false): ReleaseInfo = withContext(Dispatchers.IO) {
+        if (!force && c != null) {
+            val lastCheck = c.prefs.getLong(PREFS_LAST_CHECK, 0L)
+            if (System.currentTimeMillis() - lastCheck < CHECK_COOLDOWN_MS) {
+                val cached = getCachedRelease(c)
+                if (cached != null) return@withContext cached
+            }
+        }
+
         val conn = (URL(LATEST_API).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 15_000
@@ -51,6 +84,10 @@ object AppUpdater {
         try {
             val code = conn.responseCode
             if (code == 403) {
+                if (c != null) {
+                    val cached = getCachedRelease(c)
+                    if (cached != null) return@withContext cached
+                }
                 throw IllegalStateException("GitHub API limiet bereikt. Probeer later opnieuw.")
             }
             if (code !in 200..299) throw IllegalStateException("GitHub HTTP $code")
@@ -77,7 +114,18 @@ object AppUpdater {
                 }
             }
             val finalUrl = apkUrl ?: "https://github.com/$REPO/releases/download/$tag/LesStress.apk"
-            ReleaseInfo(tag = tag, versionName = versionName, apkUrl = finalUrl, notes = notes)
+            val info = ReleaseInfo(tag = tag, versionName = versionName, apkUrl = finalUrl, notes = notes)
+
+            if (c != null) {
+                c.prefs.edit()
+                    .putLong(PREFS_LAST_CHECK, System.currentTimeMillis())
+                    .putString(PREFS_CACHED_TAG, tag)
+                    .putString(PREFS_CACHED_URL, finalUrl)
+                    .putString(PREFS_CACHED_NOTES, notes)
+                    .apply()
+            }
+
+            info
         } finally {
             conn.disconnect()
         }

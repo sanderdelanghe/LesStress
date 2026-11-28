@@ -77,6 +77,7 @@ object AppState {
     var themeMode by mutableStateOf("system") // "system", "light", "dark"
     var version by mutableIntStateOf(0)
     var pendingEventUid by mutableStateOf<String?>(null)
+    var availableUpdate by mutableStateOf<ReleaseInfo?>(null)
 
     fun load(c: Context) {
         themeMode = c.prefs.getString("theme", "system") ?: "system"
@@ -386,6 +387,18 @@ class MainActivity : ComponentActivity() {
                 runCatching { CalendarSyncManager.syncEvents(this@MainActivity, Store.events(this@MainActivity)) }
             }
         }
+        lifecycleScope.launch(Dispatchers.IO) {
+            delay(3000)
+            runCatching {
+                val currentVer = AppUpdater.currentVersion(this@MainActivity)
+                val info = AppUpdater.checkLatestRelease(this@MainActivity, force = false)
+                if (AppUpdater.isNewerVersion(info.versionName, currentVer)) {
+                    withContext(Dispatchers.Main) {
+                        AppState.availableUpdate = info
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -568,6 +581,7 @@ private data class NavItem(
 fun MainScreen() {
     var tab by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
+    var showUpdateSettings by remember { mutableStateOf(false) }
 
     val items = remember {
         listOf(
@@ -597,7 +611,7 @@ fun MainScreen() {
                         onClick = {
                             tab = i
                             scope.launch {
-                                pagerState.animateScrollToPage(i)
+                                pagerState.scrollToPage(i)
                             }
                         },
                         icon = {
@@ -634,5 +648,38 @@ fun MainScreen() {
                 else -> NotificationsTab()
             }
         }
+    }
+
+    AppState.availableUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { AppState.availableUpdate = null },
+            icon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+            title = { Text(s("Update beschikbaar", "Update available"), fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    s(
+                        "Versie ${update.tag} is beschikbaar. Wil je nu updaten?",
+                        "Version ${update.tag} is available. Would you like to update now?"
+                    )
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    AppState.availableUpdate = null
+                    showUpdateSettings = true
+                }) {
+                    Text(s("Bekijk update", "View update"))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { AppState.availableUpdate = null }) {
+                    Text(s("Later", "Later"))
+                }
+            }
+        )
+    }
+
+    if (showUpdateSettings) {
+        SettingsScreen(onDismiss = { showUpdateSettings = false })
     }
 }

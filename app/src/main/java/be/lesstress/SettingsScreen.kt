@@ -433,8 +433,18 @@ private fun AppUpdaterSection(ctx: Context) {
     var checking by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<Float?>(null) }
-    var release by remember { mutableStateOf<ReleaseInfo?>(null) }
-    var statusMsg by remember { mutableStateOf<String?>(null) }
+    var release by remember { mutableStateOf<ReleaseInfo?>(AppState.availableUpdate ?: AppUpdater.getCachedRelease(ctx)) }
+    var statusMsg by remember {
+        mutableStateOf(
+            release?.let { info ->
+                if (AppUpdater.isNewerVersion(info.versionName, currentVer)) {
+                    s("Nieuwe versie beschikbaar: ${info.tag}", "New version available: ${info.tag}")
+                } else {
+                    s("Je gebruikt de nieuwste versie (${info.tag}).", "You are on the latest version (${info.tag}).")
+                }
+            }
+        )
+    }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var needsPermission by remember { mutableStateOf(false) }
     var cachedApk by remember { mutableStateOf(AppUpdater.getDownloadedApk(ctx)) }
@@ -463,7 +473,7 @@ private fun AppUpdaterSection(ctx: Context) {
                         errorMsg = null
                         statusMsg = null
                         needsPermission = false
-                        runCatching { AppUpdater.checkLatestRelease() }
+                        runCatching { AppUpdater.checkLatestRelease(ctx, force = true) }
                             .onSuccess { info ->
                                 release = info
                                 statusMsg = if (AppUpdater.isNewerVersion(info.versionName, currentVer)) {

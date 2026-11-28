@@ -241,23 +241,20 @@ private fun MenuProviderBlock(
                         dates = emptyList()
                     }
             }
-            VenueCard(provider.displayName(), hours, now, loc)
-            // Only show menu pager when the restaurant isn't definitively closed today
             val status = hours?.let { computeDiningStatus(it, now, loc) }
-            val closedToday = status != null && status.kind == 2 && hours?.flatMap { sec -> sec.rows.filter { it.date == now.toLocalDate() }.flatMap { it.ranges } }.isNullOrEmpty()
-            if (!closedToday) {
-                MenuPagerBlock(
-                    dates = dates?.filter { it >= now.toLocalDate() },
-                    datesError = datesError,
-                    today = now.toLocalDate(),
-                    loc = loc,
-                    cache = cache,
-                    reload = reload,
-                    fetchMenu = content.fetchMenu,
-                    onRetry = onRetry,
-                    onSite = { onLaunch(content.siteUrl) }
-                )
-            }
+            VenueCard(provider.displayName(), hours, now, loc)
+            MenuPagerBlock(
+                dates = dates?.filter { it >= now.toLocalDate() },
+                datesError = datesError,
+                today = now.toLocalDate(),
+                closedTodayStatus = status?.takeIf { it.kind == 2 },
+                loc = loc,
+                cache = cache,
+                reload = reload,
+                fetchMenu = content.fetchMenu,
+                onRetry = onRetry,
+                onSite = { onLaunch(content.siteUrl) }
+            )
         }
     }
 }
@@ -339,6 +336,7 @@ private fun MenuPagerBlock(
     dates: List<LocalDate>?,
     datesError: String?,
     today: LocalDate,
+    closedTodayStatus: Status?,
     loc: Locale,
     cache: HashMap<String, MenuData>,
     reload: Int,
@@ -429,10 +427,26 @@ private fun MenuPagerBlock(
 
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        // Show a clear closed banner for today's page when the restaurant is closed
+                        if (page == 0 && closedTodayStatus != null) {
+                            Card(
+                                Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = statusBg(closedTodayStatus.kind))
+                            ) {
+                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.Lock, contentDescription = null, tint = statusFg(closedTodayStatus.kind), modifier = Modifier.size(20.dp))
+                                    Spacer(Modifier.width(10.dp))
+                                    Column {
+                                        Text(closedTodayStatus.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = statusFg(closedTodayStatus.kind))
+                                        Text(closedTodayStatus.detail, style = MaterialTheme.typography.bodySmall, color = statusFg(closedTodayStatus.kind))
+                                    }
+                                }
+                            }
+                        }
                         when {
                             error != null -> InfoCard(s("Menu kon niet geladen worden", "Could not load menu"), error, s("Opnieuw", "Retry"), onRetry, warning = true)
                             pageMenu != null && (pageMenu!!.unavailable || pageMenu!!.sections.isEmpty()) ->
-                                InfoCard(s("Geen menu beschikbaar", "No menu available"), s("Het restaurant is mogelijk gesloten of het menu staat nog niet online.", "The restaurant may be closed or the menu isn't online yet."), tr("menu"), onSite)
+                                InfoCard(s("Geen menu beschikbaar", "No menu available"), null, tr("menu"), onSite)
                             pageMenu != null -> {
                                 pageMenu!!.sections.forEach { sec ->
                                     Text(sec.title, style = MaterialTheme.typography.labelLarge, color = cs.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
