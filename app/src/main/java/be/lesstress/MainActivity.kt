@@ -594,8 +594,8 @@ fun MainScreen() {
 
     val pagerState = rememberPagerState(pageCount = { items.size })
 
-    LaunchedEffect(pagerState.currentPage) {
-        tab = pagerState.currentPage
+    LaunchedEffect(pagerState.settledPage) {
+        tab = pagerState.settledPage
     }
 
     Scaffold(
@@ -611,7 +611,7 @@ fun MainScreen() {
                         onClick = {
                             tab = i
                             scope.launch {
-                                pagerState.scrollToPage(i)
+                                pagerState.animateScrollToPage(i)
                             }
                         },
                         icon = {
