@@ -76,6 +76,7 @@ object AppState {
     var lang by mutableStateOf("system")
     var themeMode by mutableStateOf("system") // "system", "light", "dark"
     var version by mutableIntStateOf(0)
+    var pendingEventUid by mutableStateOf<String?>(null)
 
     fun load(c: Context) {
         themeMode = c.prefs.getString("theme", "system") ?: "system"
@@ -238,11 +239,12 @@ fun ensureNotificationChannel(c: Context) {
     }
 }
 
-fun notify(c: Context, title: String, text: String, id: Int) {
+fun notify(c: Context, title: String, text: String, id: Int, eventUid: String? = null) {
     val nm = c.getSystemService(NotificationManager::class.java) ?: return
     ensureNotificationChannel(c)
     val launchIntent = Intent(c, MainActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        if (eventUid != null) putExtra("open_event_uid", eventUid)
     }
     val pi = PendingIntent.getActivity(c, id, launchIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     val builder = Notification.Builder(c, "lesstress")
@@ -260,7 +262,13 @@ fun notify(c: Context, title: String, text: String, id: Int) {
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) =
-        notify(c, i.getStringExtra("title") ?: "", i.getStringExtra("text") ?: "", i.getIntExtra("id", 0))
+        notify(
+            c,
+            i.getStringExtra("title") ?: "",
+            i.getStringExtra("text") ?: "",
+            i.getIntExtra("id", 0),
+            i.getStringExtra("uid")
+        )
 }
 
 fun scheduleAlarms(c: Context, events: List<Event>) {
@@ -271,7 +279,11 @@ fun scheduleAlarms(c: Context, events: List<Event>) {
     val now = System.currentTimeMillis()
     for (e in events) {
         val title = e.summary.substringBefore(",")
-        val intent = Intent(c, AlarmReceiver::class.java).putExtra("title", title).putExtra("text", e.location).putExtra("id", e.uid.hashCode())
+        val intent = Intent(c, AlarmReceiver::class.java)
+            .putExtra("title", title)
+            .putExtra("text", e.location)
+            .putExtra("id", e.uid.hashCode())
+            .putExtra("uid", e.uid)
         val pi = PendingIntent.getBroadcast(c, e.uid.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         if (!lessonsEnabled || e.deleted || e.start - lead < now) am.cancel(pi)
         else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, e.start - lead, pi)
@@ -341,10 +353,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         AppState.load(this)
+        intent?.getStringExtra("open_event_uid")?.let { AppState.pendingEventUid = it }
         ensureNotificationChannel(this)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         schedulePeriodicSync(this)
         setContent { LesStressTheme { AppRoot() } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra("open_event_uid")?.let { AppState.pendingEventUid = it }
     }
 
     override fun onStart() {

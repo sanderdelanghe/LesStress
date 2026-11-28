@@ -53,7 +53,13 @@ import java.util.Locale
 data class HRow(val date: LocalDate, val ranges: List<Pair<LocalTime, LocalTime>>, val note: String? = null)
 data class HSection(val title: String, val rows: List<HRow>)
 
-data class Dish(val name: String, val price: String?, val img: String?)
+data class Dish(
+    val name: String,
+    val price: String?,
+    val img: String?,
+    val isVegan: Boolean = false,
+    val isVegetarian: Boolean = false
+)
 data class MenuSec(val title: String, val soup: Boolean, val dishes: List<Dish>)
 data class MenuData(
     val date: LocalDate?,
@@ -460,6 +466,8 @@ private fun InfoCard(title: String, detail: String?, action: String, onAction: (
 @Composable
 private fun DishRow(d: Dish, soup: Boolean) {
     val cs = MaterialTheme.colorScheme
+    val vegBg = statusBg(0)
+    val vegFg = statusFg(0)
     Row(
         Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -479,9 +487,23 @@ private fun DishRow(d: Dish, soup: Boolean) {
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(d.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (d.price != null) {
-                Box(Modifier.clip(RoundedCornerShape(50)).background(cs.primaryContainer).padding(horizontal = 8.dp, vertical = 2.dp)) {
-                    Text(d.price, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = cs.onPrimaryContainer)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (d.price != null) {
+                    Box(Modifier.clip(RoundedCornerShape(50)).background(cs.primaryContainer).padding(horizontal = 8.dp, vertical = 2.dp)) {
+                        Text(d.price, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = cs.onPrimaryContainer)
+                    }
+                }
+                if (d.isVegan) {
+                    Box(Modifier.clip(RoundedCornerShape(50)).background(vegBg).padding(horizontal = 7.dp, vertical = 2.dp)) {
+                        Text(s("Vegan", "Vegan"), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = vegFg)
+                    }
+                } else if (d.isVegetarian) {
+                    Box(Modifier.clip(RoundedCornerShape(50)).background(vegBg).padding(horizontal = 7.dp, vertical = 2.dp)) {
+                        Text(s("Veggie", "Veggie"), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = vegFg)
+                    }
                 }
             }
         }

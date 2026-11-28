@@ -324,7 +324,10 @@ private fun roomShort(line: String): String {
     }
 }
 
-private fun Event.pin() = parsed().rooms.map { roomShort(it) }.filter { it.isNotEmpty() }.distinct().joinToString(", ")
+private fun Event.pin(): String {
+    if (source == "extra") return location.trim().take(18)
+    return parsed().rooms.map { roomShort(it) }.filter { it.isNotEmpty() }.distinct().joinToString(", ")
+}
 
 /** Raw text as stored, with any leftover backslashes removed. */
 private fun rawClean(s: String) = s.replace("\\", "").trim()
@@ -468,6 +471,17 @@ fun CalendarTab() {
     var view by remember { mutableStateOf(CalView.D7) }
     var day by remember { mutableStateOf(LocalDate.now(zone)) }
     var selected by remember { mutableStateOf<Event?>(null) }
+    LaunchedEffect(AppState.pendingEventUid, events) {
+        val uid = AppState.pendingEventUid
+        if (!uid.isNullOrBlank()) {
+            val found = events.firstOrNull { it.uid == uid }
+            if (found != null) {
+                day = found.date()
+                selected = found
+                AppState.pendingEventUid = null
+            }
+        }
+    }
     var colorPickerEvent by remember { mutableStateOf<Event?>(null) }
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -642,22 +656,30 @@ fun CalendarTab() {
                             }
                         }
                     } else {
-                        if (pr.soort.isNotEmpty()) InfoRow(Icons.Filled.Info, pr.soort)
-                        if (pr.groep.isNotEmpty()) InfoRow(Icons.Filled.Group, pr.groep)
-                        if (pr.lesinfo.isNotEmpty()) InfoRow(Icons.Filled.Book, pr.lesinfo)
-                        if (pr.rooms.isNotEmpty()) InfoRow(Icons.Filled.LocationOn, pr.rooms.joinToString("\n"))
-                        if (pr.teachers.isNotEmpty()) InfoRow(Icons.Filled.Person, pr.teachers.joinToString(", "))
-                        if (pr.overig.isNotEmpty()) {
-                            Text(pr.overig, style = MaterialTheme.typography.labelSmall, color = cs.onSurface.copy(alpha = 0.45f))
+                        if (e.source == "extra") {
+                            if (e.location.isNotBlank()) InfoRow(Icons.Filled.LocationOn, e.location)
+                            if (e.desc.isNotBlank()) InfoRow(Icons.Filled.Book, e.desc)
+                        } else {
+                            if (pr.soort.isNotEmpty()) InfoRow(Icons.Filled.Info, pr.soort)
+                            if (pr.groep.isNotEmpty()) InfoRow(Icons.Filled.Group, pr.groep)
+                            if (pr.lesinfo.isNotEmpty()) InfoRow(Icons.Filled.Book, pr.lesinfo)
+                            if (pr.rooms.isNotEmpty()) InfoRow(Icons.Filled.LocationOn, pr.rooms.joinToString("\n"))
+                            else if (e.location.isNotBlank()) InfoRow(Icons.Filled.LocationOn, e.location)
+                            if (pr.teachers.isNotEmpty()) InfoRow(Icons.Filled.Person, pr.teachers.joinToString(", "))
+                            if (pr.overig.isNotEmpty()) {
+                                Text(pr.overig, style = MaterialTheme.typography.labelSmall, color = cs.onSurface.copy(alpha = 0.45f))
+                            }
                         }
                     }
                 }
             },
             confirmButton = {
-                TextButton({
-                    Store.saveEvents(ctx, Store.events(ctx).map { if (it.uid == e.uid) it.copy(deleted = true, deletedAt = System.currentTimeMillis()) else it })
-                    scheduleAlarms(ctx, Store.events(ctx)); AppState.version++; selected = null
-                }) { Text(tr("delete")) }
+                if (e.source != "extra" && !e.uid.startsWith("ics2:")) {
+                    TextButton({
+                        Store.saveEvents(ctx, Store.events(ctx).map { if (it.uid == e.uid) it.copy(deleted = true, deletedAt = System.currentTimeMillis()) else it })
+                        scheduleAlarms(ctx, Store.events(ctx)); AppState.version++; selected = null
+                    }) { Text(tr("delete")) }
+                }
             },
             dismissButton = { TextButton({ selected = null }) { Text(tr("cancel")) } }
         )
