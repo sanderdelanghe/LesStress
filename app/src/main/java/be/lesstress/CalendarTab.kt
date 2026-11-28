@@ -184,49 +184,36 @@ suspend fun syncCalendar(c: Context) {
     if (icsUrl.isNotBlank()) {
         val fresh = parseKulJson(httpGet(toKulJsonUrl(icsUrl)))
         if (fresh.isNotEmpty()) {
-            val oldKul = saved.values.filter { it.source == "kuleuven" }
-            if (oldKul.isNotEmpty()) {
-                saved.entries.removeAll { it.value.source == "kuleuven" }
-                for (n in fresh) {
-                    val code = ID.find(n.summary)?.value
-                    val old = oldKul.firstOrNull { o ->
-                        o.start == n.start && o.end == n.end &&
-                            (if (code != null) ID.find(o.summary)?.value == code else o.summary.take(10) == n.summary.take(10))
-                    }
-                    saved[n.uid] = n.copy(deleted = old?.deleted ?: false, deletedAt = old?.deletedAt ?: 0L)
-                }
-            } else {
-                val freshIds = fresh.map { it.uid }.toSet()
-                for (n in fresh) {
-                    val old = saved[n.uid]
-                    if (old == null) saved[n.uid] = n
-                    else {
-                        saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
-                        val changed = old.start != n.start || old.end != n.end || old.location.trim() != n.location.trim()
-                        if (changed && !old.deleted) {
-                            Store.addChange(c, Change(now, old, n))
-                            if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
-                                notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
-                            }
+            val freshIds = fresh.map { it.uid }.toSet()
+            for (n in fresh) {
+                val old = saved[n.uid]
+                if (old == null) saved[n.uid] = n
+                else {
+                    saved[n.uid] = n.copy(deleted = old.deleted, deletedAt = old.deletedAt)
+                    val changed = old.start != n.start || old.end != n.end || old.location.trim() != n.location.trim()
+                    if (changed && !old.deleted) {
+                        Store.addChange(c, Change(now, old, n))
+                        if (changesNotif && (n.start - now) in 0..maxForwardMillis) {
+                            notify(c, n.summary.substringBefore(","), "⚠ " + tr("changes"), n.uid.hashCode() + 1)
                         }
                     }
                 }
-                val windowStart = fresh.minOf { it.start }
-                for (old in saved.values.toList()) {
-                    if (old.source == "kuljson" && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
-                        saved.remove(old.uid)
-                        if (!old.deleted) {
-                            Store.addChange(c, Change(now, old, null))
-                            if (changesNotif && (old.start - now) in 0..maxForwardMillis) {
-                                notify(c, old.summary.substringBefore(","), "⚠ " + tr("changes"), old.uid.hashCode() + 1)
-                            }
+            }
+            val windowStart = fresh.minOf { it.start }
+            for (old in saved.values.toList()) {
+                if (old.source == "kuljson" && old.uid !in freshIds && old.start >= maxOf(windowStart, now)) {
+                    saved.remove(old.uid)
+                    if (!old.deleted) {
+                        Store.addChange(c, Change(now, old, null))
+                        if (changesNotif && (old.start - now) in 0..maxForwardMillis) {
+                            notify(c, old.summary.substringBefore(","), "⚠ " + tr("changes"), old.uid.hashCode() + 1)
                         }
                     }
                 }
             }
         }
     } else {
-        saved.entries.removeAll { it.value.source == "kuleuven" || it.value.source == "kuljson" }
+        saved.entries.removeAll { it.value.source == "kuljson" }
     }
 
     if (ics2Url.isNotBlank()) {

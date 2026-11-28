@@ -66,7 +66,7 @@ data class Event(
     val deleted: Boolean = false,
     val desc: String = "",
     val deletedAt: Long = 0L,
-    val source: String = "kuleuven"
+    val source: String = "kuljson"
 )
 
 data class Change(val time: Long, val old: Event?, val new: Event?)
@@ -167,7 +167,7 @@ object Store {
         optBoolean("d", optBoolean("deleted")),
         optString("desc", ""),
         optLong("da", optLong("deletedAt", 0L)),
-        optString("src", "kuleuven")
+        optString("src", "kuljson")
     )
 
     fun events(c: Context): List<Event> {
