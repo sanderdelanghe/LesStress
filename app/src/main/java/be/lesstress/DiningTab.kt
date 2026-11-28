@@ -181,7 +181,12 @@ fun DiningTab() {
                 )
             }
         } else {
-            providers.forEach { provider ->
+            providers.forEachIndexed { index, provider ->
+                if (index > 0) HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 2.dp),
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
                 key(provider.id) {
                     MenuProviderBlock(provider, now, loc, reload, onRetry = { reload++ }, onLaunch = ::launchUrl)
                 }
@@ -207,7 +212,7 @@ private fun MenuProviderBlock(
     when (val content = remember(provider.id) { provider.content() }) {
         is MenuContent.OrderButton -> {
             VenueCard(provider.displayName(), hours, now, loc) {
-                Button({ onLaunch(content.orderUrl) }, Modifier.fillMaxWidth().height(44.dp)) {
+                OutlinedButton({ onLaunch(content.orderUrl) }, Modifier.fillMaxWidth().height(44.dp)) {
                     Icon(Icons.Filled.ShoppingCart, contentDescription = null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(content.buttonLabel(), style = MaterialTheme.typography.titleSmall)
@@ -237,17 +242,22 @@ private fun MenuProviderBlock(
                     }
             }
             VenueCard(provider.displayName(), hours, now, loc)
-            MenuPagerBlock(
-                dates = dates?.filter { it >= now.toLocalDate() },
-                datesError = datesError,
-                today = now.toLocalDate(),
-                loc = loc,
-                cache = cache,
-                reload = reload,
-                fetchMenu = content.fetchMenu,
-                onRetry = onRetry,
-                onSite = { onLaunch(content.siteUrl) }
-            )
+            // Only show menu pager when the restaurant isn't definitively closed today
+            val status = hours?.let { computeDiningStatus(it, now, loc) }
+            val closedToday = status != null && status.kind == 2 && hours?.flatMap { sec -> sec.rows.filter { it.date == now.toLocalDate() }.flatMap { it.ranges } }.isNullOrEmpty()
+            if (!closedToday) {
+                MenuPagerBlock(
+                    dates = dates?.filter { it >= now.toLocalDate() },
+                    datesError = datesError,
+                    today = now.toLocalDate(),
+                    loc = loc,
+                    cache = cache,
+                    reload = reload,
+                    fetchMenu = content.fetchMenu,
+                    onRetry = onRetry,
+                    onSite = { onLaunch(content.siteUrl) }
+                )
+            }
         }
     }
 }

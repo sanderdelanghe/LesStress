@@ -469,7 +469,22 @@ fun CalendarTab() {
     var events by remember { mutableStateOf(listOf<Event>()) }
     LaunchedEffect(AppState.version) { events = Store.events(ctx).filter { !it.deleted } }
     var view by remember { mutableStateOf(CalView.D7) }
-    var day by remember { mutableStateOf(LocalDate.now(zone)) }
+    // On weekends without events, snap to the upcoming Monday so the week view shows next week
+    var day by remember {
+        mutableStateOf(run {
+            val today = LocalDate.now(zone)
+            if (today.dayOfWeek.value >= 6) today.plusDays((8 - today.dayOfWeek.value).toLong())
+            else today
+        })
+    }
+    // Once events are loaded: if today is weekend but there ARE events this weekend, stay on today
+    val todayActual = LocalDate.now(zone)
+    LaunchedEffect(events) {
+        if (todayActual.dayOfWeek.value >= 6) {
+            val hasWeekendEvents = events.any { it.startDt().toLocalDate() == todayActual }
+            if (hasWeekendEvents) day = todayActual
+        }
+    }
     var selected by remember { mutableStateOf<Event?>(null) }
     LaunchedEffect(AppState.pendingEventUid, events) {
         val uid = AppState.pendingEventUid
@@ -778,19 +793,26 @@ private fun PagedGrid(modifier: Modifier, view: CalView, day: LocalDate, events:
     var widthPx by remember { mutableIntStateOf(1) }
     val scope = rememberCoroutineScope()
     var job by remember { mutableStateOf<Job?>(null) }
+    // Prevent a new drag starting while the snap-back animation is still running
+    var isAnimating by remember { mutableStateOf(false) }
     val pages = (-1..1).map { pageDays(view, day, events, it) }
     val zoomCb = rememberUpdatedState(onZoom); val endCb = rememberUpdatedState(onZoomEnd); val shiftCb = rememberUpdatedState(onShift)
-    val dragState = rememberDraggableState { d -> off.floatValue = (off.floatValue + d).coerceIn(-widthPx.toFloat(), widthPx.toFloat()) }
+    val dragState = rememberDraggableState { d ->
+        if (!isAnimating) off.floatValue = (off.floatValue + d).coerceIn(-widthPx.toFloat(), widthPx.toFloat())
+    }
 
     Column(modifier.fillMaxWidth().draggable(dragState, Orientation.Horizontal,
         onDragStarted = { job?.cancel() },
         onDragStopped = { v ->
+            if (isAnimating) return@draggable
             job = scope.launch {
+                isAnimating = true
                 val w = widthPx.toFloat(); val o = off.floatValue
                 val dir = if (o > w * 0.3f || v > 1000f) 1 else if (o < -w * 0.3f || v < -1000f) -1 else 0
                 animate(o, dir * w, v, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)) { value, _ -> off.floatValue = value }
                 if (dir != 0) shiftCb.value(-dir)
                 off.floatValue = 0f
+                isAnimating = false
             }
         })) {
         Row(Modifier.fillMaxWidth()) {

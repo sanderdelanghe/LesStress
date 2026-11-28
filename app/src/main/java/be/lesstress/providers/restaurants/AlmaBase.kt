@@ -93,7 +93,9 @@ internal fun parseAlmaMenu(html: String): MenuData {
                 val p = e.trim().split(" "); val w = p.lastOrNull()?.removeSuffix("w")?.toIntOrNull()
                 if (w == null || p.size < 2) null else p[0] to w
             }?.minByOrNull { kotlin.math.abs(it.second - 400) }?.first?.let { if (it.startsWith("/")) ALMA_BASE + it else it }
-            val isVegan = body.contains("vegan", true) || dishName.contains("vegan", true) || dishName.contains("(vg)", true)
+            // "vegan" must NOT match inside "vegetarisch/vegetarian" — check word boundary by excluding "vegetar" prefix
+            val bodyLc = body.lowercase(); val dishLc = dishName.lowercase()
+            val isVegan = Regex("\\bvegan\\b").containsMatchIn(bodyLc) || Regex("\\bvegan\\b").containsMatchIn(dishLc) || dishLc.contains("(vg)")
             val isVegetarian = !isVegan && (body.contains("vegetar", true) || body.contains("veggie", true) ||
                     dishName.contains("veggie", true) || dishName.contains("vegetar", true) || dishName.contains("(v)", true))
             dishes += Dish(dishName, price, img, isVegan = isVegan, isVegetarian = isVegetarian)

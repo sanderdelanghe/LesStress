@@ -121,7 +121,12 @@ fun LibraryTab() {
                 )
             }
         } else {
-            providers.forEach { provider ->
+            providers.forEachIndexed { index, provider ->
+                if (index > 0) HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 2.dp),
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant
+                )
                 key(provider.id) {
                     LibraryProviderBlock(provider, now, loc, reload, ::launchUrl)
                 }
@@ -190,11 +195,13 @@ private fun LibraryProviderBlock(
                         placeholder = { Text("369") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     )
                     Button(
                         onClick = { seat.toIntOrNull()?.let { onLaunch(checkIn.urlForSeat(it)) } },
                         enabled = seat.isNotEmpty(),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.height(56.dp)
                     ) { Text(tr("checkin")) }
                 }
