@@ -410,4 +410,142 @@ private fun AppSettingsSection(ctx: Context) {
             }
         }
     }
+
+    AppUpdaterSection(ctx)
+}
+
+@Composable
+private fun AppUpdaterSection(ctx: Context) {
+    val scope = rememberCoroutineScope()
+    val currentVer = remember { AppUpdater.currentVersion(ctx) }
+    var checking by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<Float?>(null) }
+    var release by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var statusMsg by remember { mutableStateOf<String?>(null) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var needsPermission by remember { mutableStateOf(false) }
+
+    SectionHeader(s("App-updates", "App Updates"))
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.SystemUpdate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("LesStress", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "${s("Geïnstalleerde versie", "Installed version")}: v$currentVer",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        checking = true
+                        errorMsg = null
+                        statusMsg = null
+                        needsPermission = false
+                        runCatching { AppUpdater.checkLatestRelease() }
+                            .onSuccess { info ->
+                                release = info
+                                statusMsg = if (AppUpdater.isNewerVersion(info.versionName, currentVer)) {
+                                    s("Nieuwe versie beschikbaar: ${info.tag}", "New version available: ${info.tag}")
+                                } else {
+                                    s("Je gebruikt de nieuwste versie (${info.tag}).", "You are on the latest version (${info.tag}).")
+                                }
+                            }
+                            .onFailure { e ->
+                                errorMsg = "⚠ " + (e.message ?: s("Controleren mislukt", "Update check failed"))
+                            }
+                        checking = false
+                    }
+                },
+                enabled = !checking && !downloading,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (checking) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                } else {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(s("Controleren op updates", "Check for updates"))
+            }
+
+            statusMsg?.let { msg ->
+                Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+            }
+            errorMsg?.let { err ->
+                Text(err, style = MaterialTheme.typography.bodySmall, color = RED)
+            }
+
+            val available = release?.takeIf { AppUpdater.isNewerVersion(it.versionName, currentVer) }
+            if (available != null) {
+                if (available.notes.isNotBlank()) {
+                    Text(
+                        text = available.notes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (downloading) {
+                    val p = progress
+                    if (p != null) {
+                        LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        scope.launch {
+                            downloading = true
+                            errorMsg = null
+                            needsPermission = false
+                            progress = null
+                            runCatching {
+                                val apk = AppUpdater.downloadApk(ctx, available.apkUrl) { progress = it }
+                                if (!AppUpdater.canInstallPackages(ctx)) {
+                                    needsPermission = true
+                                } else {
+                                    AppUpdater.installApk(ctx, apk)
+                                }
+                            }.onFailure { e ->
+                                errorMsg = "⚠ " + (e.message ?: s("Download mislukt", "Download failed"))
+                            }
+                            downloading = false
+                        }
+                    },
+                    enabled = !downloading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (downloading) s("Downloaden…", "Downloading…")
+                        else s("Download & installeer ${available.tag}", "Download & install ${available.tag}")
+                    )
+                }
+
+                if (needsPermission) {
+                    OutlinedButton(
+                        onClick = { AppUpdater.openInstallPermissionSettings(ctx) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Security, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(s("Sta app-installaties toe in Instellingen", "Allow app installs in Settings"))
+                    }
+                }
+            }
+        }
+    }
 }
