@@ -50,7 +50,7 @@ import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
 
-data class HRow(val date: LocalDate, val ranges: List<Pair<LocalTime, LocalTime>>)
+data class HRow(val date: LocalDate, val ranges: List<Pair<LocalTime, LocalTime>>, val note: String? = null)
 data class HSection(val title: String, val rows: List<HRow>)
 
 data class Dish(val name: String, val price: String?, val img: String?)
@@ -79,21 +79,39 @@ interface MenuProvider : AppProvider {
 
 private fun computeDiningStatus(secs: List<HSection>, now: LocalDateTime, loc: Locale): Status? {
     if (secs.isEmpty()) return null
-    val byDate = secs.flatMap { it.rows }.groupBy({ it.date }, { it.ranges }).mapValues { e -> e.value.flatten().sortedBy { it.first } }
+    val allRows = secs.flatMap { it.rows }
     val today = now.toLocalDate()
+    val todayRows = allRows.filter { it.date == today }
+    val todays = todayRows.flatMap { it.ranges }.sortedBy { it.first }
     val t = now.toLocalTime()
-    val todays = byDate[today].orEmpty()
+    val todayNote = todayRows.firstOrNull { !it.note.isNullOrBlank() }?.note
+
     todays.firstOrNull { t >= it.first && t < it.second }?.let { r ->
         val mins = Duration.between(t, r.second).toMinutes()
-        return if (mins <= 30) Status(1, tr("open"), s("Sluit over $mins min (om ${hhmm(r.second)})", "Closes in $mins min (at ${hhmm(r.second)})"))
-        else Status(0, tr("open"), s("Sluit om ${hhmm(r.second)}", "Closes at ${hhmm(r.second)}"))
+        val noteSuffix = if (todayNote != null) " · $todayNote" else ""
+        return if (mins <= 30) Status(1, tr("open"), s("Sluit over $mins min (om ${hhmm(r.second)})$noteSuffix", "Closes in $mins min (at ${hhmm(r.second)})$noteSuffix"))
+        else Status(0, tr("open"), s("Sluit om ${hhmm(r.second)}$noteSuffix", "Closes at ${hhmm(r.second)}$noteSuffix"))
     }
-    todays.firstOrNull { it.first > t }?.let { return Status(2, tr("closed"), s("Opent om ${hhmm(it.first)}", "Opens at ${hhmm(it.first)}")) }
+    todays.firstOrNull { it.first > t }?.let {
+        val noteSuffix = if (todayNote != null) " · $todayNote" else ""
+        return Status(2, tr("closed"), s("Opent om ${hhmm(it.first)}$noteSuffix", "Opens at ${hhmm(it.first)}$noteSuffix"))
+    }
+
+    val byDate = allRows.groupBy({ it.date }, { it.ranges }).mapValues { e -> e.value.flatten().sortedBy { it.first } }
     val next = byDate.filter { it.key > today && it.value.isNotEmpty() }.minByOrNull { it.key }
-        ?: return Status(2, tr("closed"), s("Vandaag gesloten", "Closed today"))
+    if (next == null) {
+        val detail = todayNote ?: s("Vandaag gesloten", "Closed today")
+        val label = if (todayNote?.contains("onzeker", ignoreCase = true) == true) s("Onzeker", "Uncertain") else tr("closed")
+        val kind = if (label == tr("closed")) 2 else 1
+        return Status(kind, label, detail)
+    }
     val whenText = if (next.key == today.plusDays(1)) s("morgen", "tomorrow")
     else next.key.dayOfWeek.getDisplayName(TextStyle.SHORT, loc) + " " + next.key.dayOfMonth + "/" + next.key.monthValue
-    return Status(2, tr("closed"), s("Opent $whenText om ${hhmm(next.value.first().first)}", "Opens $whenText at ${hhmm(next.value.first().first)}"))
+    val closedDetail = if (todayNote != null) "$todayNote · " + s("Opent $whenText om ${hhmm(next.value.first().first)}", "Opens $whenText at ${hhmm(next.value.first().first)}")
+    else s("Opent $whenText om ${hhmm(next.value.first().first)}", "Opens $whenText at ${hhmm(next.value.first().first)}")
+    val label = if (todayNote?.contains("onzeker", ignoreCase = true) == true) s("Onzeker", "Uncertain") else tr("closed")
+    val kind = if (label == tr("closed")) 2 else 1
+    return Status(kind, label, closedDetail)
 }
 
 private val brussels = ZoneId.of("Europe/Brussels")
@@ -270,12 +288,30 @@ private fun HoursList(sections: List<HSection>, today: LocalDate, loc: Locale) {
             if (sections.size > 1) Text(sec.title, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             sec.rows.forEach { r ->
                 val isToday = r.date == today
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(if (isToday) cs.secondaryContainer else Color.Transparent)
-                    .padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    Text(r.date.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).capf() + " " + r.date.dayOfMonth + "/" + r.date.monthValue,
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
-                    if (r.ranges.isEmpty()) Text(tr("closed"), color = RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                    else Text(r.ranges.joinToString(" · ") { hhmm(it.first) + "–" + hhmm(it.second) }, style = MaterialTheme.typography.bodySmall, fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(if (isToday) cs.secondaryContainer else Color.Transparent)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        r.date.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).capf() + " " + r.date.dayOfMonth + "/" + r.date.monthValue,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                    )
+                    if (!r.note.isNullOrBlank()) {
+                        val color = if (r.ranges.isEmpty()) RED else AMBER
+                        val text = if (r.ranges.isEmpty()) r.note else "${r.ranges.joinToString(" · ") { hhmm(it.first) + "–" + hhmm(it.second) }} (${r.note})"
+                        Text(text, color = color, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    } else if (r.ranges.isEmpty()) {
+                        Text(tr("closed"), color = RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                    } else {
+                        Text(
+                            r.ranges.joinToString(" · ") { hhmm(it.first) + "–" + hhmm(it.second) },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
                 }
             }
         }

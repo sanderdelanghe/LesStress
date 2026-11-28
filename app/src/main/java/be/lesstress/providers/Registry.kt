@@ -5,8 +5,10 @@ import be.lesstress.LibraryProvider
 import be.lesstress.MenuProvider
 import be.lesstress.prefs
 import be.lesstress.providers.libraries.KulakBib
+import be.lesstress.providers.libraries.VivesCoconKortrijk
 import be.lesstress.providers.restaurants.KulakBroodjesbar
 import be.lesstress.providers.restaurants.KulakRestaurant
+import be.lesstress.providers.restaurants.VivesCube
 
 interface AppProvider {
     val id: String
@@ -58,12 +60,14 @@ abstract class ProviderRegistry<T : AppProvider>(private val keyPrefix: String) 
 object MenuProviderRegistry : ProviderRegistry<MenuProvider>("menu_provider") {
     override val all: List<MenuProvider> = listOf(
         KulakRestaurant,
-        KulakBroodjesbar
+        KulakBroodjesbar,
+        VivesCube
     )
 }
 
 object LibraryProviderRegistry : ProviderRegistry<LibraryProvider>("lib_provider") {
     override val all: List<LibraryProvider> = listOf(
-        KulakBib
+        KulakBib,
+        VivesCoconKortrijk
     )
 }

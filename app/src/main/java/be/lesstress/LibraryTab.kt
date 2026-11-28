@@ -34,7 +34,7 @@ import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
 
-data class LibRow(val date: LocalDate, val open: LocalTime?, val close: LocalTime?)
+data class LibRow(val date: LocalDate, val open: LocalTime?, val close: LocalTime?, val note: String? = null)
 data class LibraryOccupancy(val occupied: Int, val capacity: Int)
 data class LibraryData(val hours: List<LibRow>, val occupancy: LibraryOccupancy? = null)
 data class LibraryBookAction(val url: String, val label: () -> String)
@@ -58,12 +58,36 @@ private fun computeLibStatus(rows: List<LibRow>, now: LocalDateTime, loc: Locale
     val today = now.toLocalDate(); val t = now.toLocalTime()
     val todayRow = rows.firstOrNull { it.date == today }
 
-    if (todayRow?.open != null && todayRow.close != null) {
-        if (t >= todayRow.open && t < todayRow.close) {
-            val mins = Duration.between(t, todayRow.close).toMinutes()
-            return if (mins <= 30) Status(1, tr("open"), s("Sluit over $mins min (om ${hhmm(todayRow.close)})", "Closes in $mins min (at ${hhmm(todayRow.close)})"))
-            else Status(0, tr("open"), s("Sluit om ${hhmm(todayRow.close)}", "Closes at ${hhmm(todayRow.close)}"))
-        } else if (t < todayRow.open) return Status(2, tr("closed"), s("Opent om ${hhmm(todayRow.open)}", "Opens at ${hhmm(todayRow.open)}"))
+    if (todayRow != null) {
+        val note = todayRow.note
+        if (!note.isNullOrBlank()) {
+            val isClosed = note.contains("gesloten", ignoreCase = true) || todayRow.open == null || todayRow.close == null
+            if (isClosed) {
+                val next = rows.filter { it.date > today && it.open != null }.minByOrNull { it.date }
+                val nextText = if (next != null) {
+                    val whenText = if (next.date == today.plusDays(1)) s("morgen", "tomorrow")
+                    else next.date.dayOfWeek.getDisplayName(TextStyle.SHORT, loc) + " " + next.date.dayOfMonth + "/" + next.date.monthValue
+                    " · " + s("Opent $whenText om ${hhmm(next.open!!)}", "Opens $whenText at ${hhmm(next.open)}")
+                } else ""
+                return Status(2, tr("closed"), "$note$nextText")
+            } else {
+                if (t >= todayRow.open && t < todayRow.close) {
+                    val mins = Duration.between(t, todayRow.close).toMinutes()
+                    val timeDetail = if (mins <= 30) s("Sluit over $mins min (om ${hhmm(todayRow.close)})", "Closes in $mins min (at ${hhmm(todayRow.close)})")
+                    else s("Sluit om ${hhmm(todayRow.close)}", "Closes at ${hhmm(todayRow.close)}")
+                    return Status(1, s("Afwijkend", "Modified"), "$note · $timeDetail")
+                } else if (t < todayRow.open) {
+                    return Status(1, s("Afwijkend", "Modified"), "$note · ${s("Opent om ${hhmm(todayRow.open)}", "Opens at ${hhmm(todayRow.open)}")}")
+                }
+            }
+        }
+        if (todayRow.open != null && todayRow.close != null) {
+            if (t >= todayRow.open && t < todayRow.close) {
+                val mins = Duration.between(t, todayRow.close).toMinutes()
+                return if (mins <= 30) Status(1, tr("open"), s("Sluit over $mins min (om ${hhmm(todayRow.close)})", "Closes in $mins min (at ${hhmm(todayRow.close)})"))
+                else Status(0, tr("open"), s("Sluit om ${hhmm(todayRow.close)}", "Closes at ${hhmm(todayRow.close)}"))
+            } else if (t < todayRow.open) return Status(2, tr("closed"), s("Opent om ${hhmm(todayRow.open)}", "Opens at ${hhmm(todayRow.open)}"))
+        }
     }
     val next = rows.filter { it.date > today && it.open != null }.minByOrNull { it.date } ?: return Status(2, tr("closed"), s("Vandaag gesloten", "Closed today"))
     val whenText = if (next.date == today.plusDays(1)) s("morgen", "tomorrow") else next.date.dayOfWeek.getDisplayName(TextStyle.SHORT, loc) + " " + next.date.dayOfMonth + "/" + next.date.monthValue
@@ -226,10 +250,47 @@ private fun LibVenueCard(
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         hours.forEach { r ->
                             val isToday = r.date == now.toLocalDate()
-                            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(if (isToday) cs.secondaryContainer else Color.Transparent).padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                Text(r.date.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).capf() + " " + r.date.dayOfMonth + "/" + r.date.monthValue, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
-                                if (r.open == null || r.close == null) Text(tr("closed"), color = RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                else Text("${hhmm(r.open)}–${hhmm(r.close)}", style = MaterialTheme.typography.bodySmall, fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
+                            Column(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(if (isToday) cs.secondaryContainer else Color.Transparent)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        r.date.dayOfWeek.getDisplayName(TextStyle.SHORT, loc).capf() + " " + r.date.dayOfMonth + "/" + r.date.monthValue,
+                                        Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                    if (!r.note.isNullOrBlank()) {
+                                        val isClosed = r.note.contains("gesloten", ignoreCase = true) || r.open == null || r.close == null
+                                        if (isClosed) {
+                                            Text(tr("closed"), color = RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                        } else {
+                                            Text(
+                                                "${hhmm(r.open!!)}–${hhmm(r.close!!)} (${s("afwijkend", "modified")})",
+                                                color = AMBER,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    } else if (r.open == null || r.close == null) {
+                                        Text(tr("closed"), color = RED, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                    } else {
+                                        Text(
+                                            "${hhmm(r.open)}–${hhmm(r.close)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                }
+                                if (!r.note.isNullOrBlank()) {
+                                    Text(
+                                        r.note,
+                                        color = cs.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(top = 1.dp)
+                                    )
+                                }
                             }
                         }
                     }
