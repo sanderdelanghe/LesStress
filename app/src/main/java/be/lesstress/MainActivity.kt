@@ -227,11 +227,20 @@ fun schedulePeriodicSync(c: Context) {
     WorkManager.getInstance(c).enqueueUniquePeriodicWork("ics-sync", ExistingPeriodicWorkPolicy.KEEP, req)
 }
 
+private var channelCreated = false
+
+fun ensureNotificationChannel(c: Context) {
+    if (channelCreated) return
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val nm = c.getSystemService(NotificationManager::class.java) ?: return
+        nm.createNotificationChannel(NotificationChannel("lesstress", "LesStress", NotificationManager.IMPORTANCE_DEFAULT))
+        channelCreated = true
+    }
+}
+
 fun notify(c: Context, title: String, text: String, id: Int) {
     val nm = c.getSystemService(NotificationManager::class.java) ?: return
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        nm.createNotificationChannel(NotificationChannel("lesstress", "LesStress", NotificationManager.IMPORTANCE_DEFAULT))
-    }
+    ensureNotificationChannel(c)
     val launchIntent = Intent(c, MainActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
     }
@@ -332,6 +341,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         AppState.load(this)
+        ensureNotificationChannel(this)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         schedulePeriodicSync(this)
         setContent { LesStressTheme { AppRoot() } }
