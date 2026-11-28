@@ -793,26 +793,43 @@ private fun PagedGrid(modifier: Modifier, view: CalView, day: LocalDate, events:
     var widthPx by remember { mutableIntStateOf(1) }
     val scope = rememberCoroutineScope()
     var job by remember { mutableStateOf<Job?>(null) }
-    // Prevent a new drag starting while the snap-back animation is still running
-    var isAnimating by remember { mutableStateOf(false) }
+    var targetDir by remember { mutableIntStateOf(0) }
     val pages = (-1..1).map { pageDays(view, day, events, it) }
     val zoomCb = rememberUpdatedState(onZoom); val endCb = rememberUpdatedState(onZoomEnd); val shiftCb = rememberUpdatedState(onShift)
     val dragState = rememberDraggableState { d ->
-        if (!isAnimating) off.floatValue = (off.floatValue + d).coerceIn(-widthPx.toFloat(), widthPx.toFloat())
+        off.floatValue = (off.floatValue + d).coerceIn(-widthPx.toFloat(), widthPx.toFloat())
     }
 
     Column(modifier.fillMaxWidth().draggable(dragState, Orientation.Horizontal,
-        onDragStarted = { job?.cancel() },
-        onDragStopped = { v ->
-            if (isAnimating) return@draggable
-            job = scope.launch {
-                isAnimating = true
-                val w = widthPx.toFloat(); val o = off.floatValue
-                val dir = if (o > w * 0.3f || v > 1000f) 1 else if (o < -w * 0.3f || v < -1000f) -1 else 0
-                animate(o, dir * w, v, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)) { value, _ -> off.floatValue = value }
-                if (dir != 0) shiftCb.value(-dir)
+        onDragStarted = {
+            val pendingDir = targetDir
+            targetDir = 0
+            job?.cancel()
+            job = null
+            if (pendingDir != 0) {
+                shiftCb.value(-pendingDir)
                 off.floatValue = 0f
-                isAnimating = false
+            }
+        },
+        onDragStopped = { v ->
+            val w = widthPx.toFloat()
+            val o = off.floatValue
+            val dir = if (o > w * 0.3f || v > 1000f) 1 else if (o < -w * 0.3f || v < -1000f) -1 else 0
+            targetDir = dir
+            job = scope.launch {
+                if (dir != 0) {
+                    animate(o, dir * w, v, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)) { value, _ ->
+                        off.floatValue = value
+                    }
+                    targetDir = 0
+                    shiftCb.value(-dir)
+                    off.floatValue = 0f
+                } else {
+                    animate(o, 0f, v, spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)) { value, _ ->
+                        off.floatValue = value
+                    }
+                    targetDir = 0
+                }
             }
         })) {
         Row(Modifier.fillMaxWidth()) {
