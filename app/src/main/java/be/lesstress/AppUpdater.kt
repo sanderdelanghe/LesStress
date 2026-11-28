@@ -50,6 +50,9 @@ object AppUpdater {
         }
         try {
             val code = conn.responseCode
+            if (code == 403) {
+                throw IllegalStateException("GitHub API limiet bereikt. Probeer later opnieuw.")
+            }
             if (code !in 200..299) throw IllegalStateException("GitHub HTTP $code")
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             val j = JSONObject(body)
@@ -117,6 +120,17 @@ object AppUpdater {
             target
         } finally {
             conn.disconnect()
+        }
+    }
+
+    fun getDownloadedApk(c: Context): File? {
+        val f = File(c.cacheDir, "updates/LesStress.apk")
+        return if (f.exists() && f.length() > 0) f else null
+    }
+
+    fun clearDownloadedApk(c: Context) {
+        runCatching {
+            File(c.cacheDir, "updates").deleteRecursively()
         }
     }
 

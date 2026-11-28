@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import be.lesstress.providers.*
+import java.io.File
 import kotlinx.coroutines.launch
 
 private enum class SettingsCategory(val icon: ImageVector) {
@@ -425,6 +426,7 @@ private fun AppUpdaterSection(ctx: Context) {
     var statusMsg by remember { mutableStateOf<String?>(null) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var needsPermission by remember { mutableStateOf(false) }
+    var cachedApk by remember { mutableStateOf(AppUpdater.getDownloadedApk(ctx)) }
 
     SectionHeader(s("App-updates", "App Updates"))
 
@@ -507,12 +509,24 @@ private fun AppUpdaterSection(ctx: Context) {
                 Button(
                     onClick = {
                         scope.launch {
-                            downloading = true
                             errorMsg = null
                             needsPermission = false
+
+                            val existingApk = cachedApk?.takeIf { it.exists() && it.length() > 0 }
+                            if (existingApk != null) {
+                                if (!AppUpdater.canInstallPackages(ctx)) {
+                                    needsPermission = true
+                                } else {
+                                    AppUpdater.installApk(ctx, existingApk)
+                                }
+                                return@launch
+                            }
+
+                            downloading = true
                             progress = null
                             runCatching {
                                 val apk = AppUpdater.downloadApk(ctx, available.apkUrl) { progress = it }
+                                cachedApk = apk
                                 if (!AppUpdater.canInstallPackages(ctx)) {
                                     needsPermission = true
                                 } else {
@@ -527,11 +541,19 @@ private fun AppUpdaterSection(ctx: Context) {
                     enabled = !downloading,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(18.dp))
+                    val hasCached = cachedApk?.exists() == true
+                    Icon(
+                        if (hasCached) Icons.Filled.Security else Icons.Filled.Download,
+                        contentDescription = null,
+                        Modifier.size(18.dp)
+                    )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        if (downloading) s("Downloaden…", "Downloading…")
-                        else s("Download & installeer ${available.tag}", "Download & install ${available.tag}")
+                        when {
+                            downloading -> s("Downloaden…", "Downloading…")
+                            hasCached -> s("Installeer ${available.tag}", "Install ${available.tag}")
+                            else -> s("Download & installeer ${available.tag}", "Download & install ${available.tag}")
+                        }
                     )
                 }
 
