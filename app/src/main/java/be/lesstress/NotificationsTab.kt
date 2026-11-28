@@ -152,7 +152,11 @@ fun NotificationsTab() {
 @Composable
 private fun ChangeCard(ch: Change, loc: Locale) {
     val cs = MaterialTheme.colorScheme
-    val timeFmt = remember(loc) { SimpleDateFormat("d MMM HH:mm", loc) }
+    val timeFmt = remember(loc) {
+        SimpleDateFormat("d MMM HH:mm", loc).apply {
+            timeZone = TimeZone.getTimeZone("Europe/Brussels")
+        }
+    }
     val formattedChangeTime = timeFmt.format(Date(ch.time))
 
     val oldEv = ch.old
@@ -197,8 +201,8 @@ private fun ChangeCard(ch: Change, loc: Locale) {
                     EventHighlightCard(
                         ev = newEv,
                         loc = loc,
-                        bgColor = GREEN_BG,
-                        textColor = GREEN
+                        bgColor = statusBg(0),
+                        textColor = statusFg(0)
                     )
                 }
 
@@ -209,13 +213,13 @@ private fun ChangeCard(ch: Change, loc: Locale) {
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         textDecoration = TextDecoration.LineThrough,
-                        color = RED
+                        color = statusFg(2)
                     )
                     EventHighlightCard(
                         ev = oldEv,
                         loc = loc,
-                        bgColor = RED_BG,
-                        textColor = RED,
+                        bgColor = statusBg(2),
+                        textColor = statusFg(2),
                         strikethrough = true
                     )
                 }
@@ -291,7 +295,7 @@ private fun DiffSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
-                .background(RED_BG)
+                .background(statusBg(2))
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -299,12 +303,12 @@ private fun DiffSection(
                 text = "${tr("old")}: ",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = RED
+                color = statusFg(2)
             )
             Text(
                 text = oldValue,
                 style = MaterialTheme.typography.bodySmall,
-                color = RED,
+                color = statusFg(2),
                 textDecoration = TextDecoration.LineThrough
             )
         }
@@ -314,7 +318,7 @@ private fun DiffSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(4.dp))
-                .background(GREEN_BG)
+                .background(statusBg(0))
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -322,13 +326,13 @@ private fun DiffSection(
                 text = "${tr("new")}: ",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = GREEN
+                color = statusFg(0)
             )
             Text(
                 text = newValue,
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Bold,
-                color = GREEN
+                color = statusFg(0)
             )
         }
     }
@@ -430,7 +434,11 @@ fun RemovedLessonsDialog(onDismiss: () -> Unit) {
                                     )
                                 }
                                 if (ev.deletedAt > 0) {
-                                    val timeFmt = SimpleDateFormat("d MMM HH:mm", loc)
+                                    val timeFmt = remember(loc) {
+                                        SimpleDateFormat("d MMM HH:mm", loc).apply {
+                                            timeZone = TimeZone.getTimeZone("Europe/Brussels")
+                                        }
+                                    }
                                     Text(
                                         text = "${s("Verwijderd op", "Removed on")}: ${timeFmt.format(Date(ev.deletedAt))}",
                                         style = MaterialTheme.typography.labelSmall,

@@ -295,8 +295,13 @@ private fun splitEvent(e: Event): Parsed {
     return Parsed(vak, "", lesinfo.distinct().joinToString(", "), groups.distinct().joinToString(" | "), rooms, teachers, "")
 }
 
-private val parsedCache = java.util.concurrent.ConcurrentHashMap<String, Parsed>()
-private fun Event.parsed(): Parsed = parsedCache.getOrPut("$uid|$hash|${desc.hashCode()}") { splitEvent(this) }
+private val parsedCache = android.util.LruCache<String, Parsed>(256)
+private fun Event.parsed(): Parsed {
+    val key = "$uid|$hash|${desc.hashCode()}"
+    return synchronized(parsedCache) {
+        parsedCache.get(key) ?: splitEvent(this).also { parsedCache.put(key, it) }
+    }
+}
 
 /** Main title: the course name(s), e.g. "MFP bloedsomloop: practica". */
 private fun Event.title(): String = parsed().vak.joinToString(" | ") { v ->

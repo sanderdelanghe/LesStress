@@ -24,6 +24,39 @@ val AMBER_BG = Color(0xFFFFEBC2)
 val RED = Color(0xFFB3261E)
 val RED_BG = Color(0xFFFADBD8)
 
+val GREEN_DARK = Color(0xFF81C784)
+val GREEN_BG_DARK = Color(0xFF14381E)
+val AMBER_DARK = Color(0xFFFFB74D)
+val AMBER_BG_DARK = Color(0xFF3E2800)
+val RED_DARK = Color(0xFFE57373)
+val RED_BG_DARK = Color(0xFF3E1A1A)
+
+@Composable
+fun isDarkTheme(): Boolean {
+    val mode = AppState.themeMode
+    return if (mode == "system") androidx.compose.foundation.isSystemInDarkTheme() else mode == "dark"
+}
+
+@Composable
+fun statusFg(kind: Int): Color {
+    val dark = isDarkTheme()
+    return when (kind) {
+        0 -> if (dark) GREEN_DARK else GREEN
+        1 -> if (dark) AMBER_DARK else AMBER
+        else -> if (dark) RED_DARK else RED
+    }
+}
+
+@Composable
+fun statusBg(kind: Int): Color {
+    val dark = isDarkTheme()
+    return when (kind) {
+        0 -> if (dark) GREEN_BG_DARK else GREEN_BG
+        1 -> if (dark) AMBER_BG_DARK else AMBER_BG
+        else -> if (dark) RED_BG_DARK else RED_BG
+    }
+}
+
 fun fg(kind: Int) = when (kind) { 0 -> GREEN; 1 -> AMBER; else -> RED }
 fun bg(kind: Int) = when (kind) { 0 -> GREEN_BG; 1 -> AMBER_BG; else -> RED_BG }
 
@@ -31,13 +64,15 @@ data class Status(val kind: Int, val label: String, val detail: String)
 
 @Composable
 fun StatusPill(st: Status) {
+    val pillBg = statusBg(st.kind)
+    val pillFg = statusFg(st.kind)
     Row(
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(bg(st.kind)).padding(horizontal = 8.dp, vertical = 4.dp),
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(pillBg).padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(7.dp).clip(CircleShape).background(fg(st.kind)))
+        Box(Modifier.size(7.dp).clip(CircleShape).background(pillFg))
         Spacer(Modifier.width(6.dp))
-        Text(st.label, color = fg(st.kind), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+        Text(st.label, color = pillFg, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
     }
 }
 
