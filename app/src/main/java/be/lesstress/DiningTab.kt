@@ -427,13 +427,13 @@ private fun MenuPagerBlock(
 
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        // Show a clear closed banner for today's page when the restaurant is closed
+                        // Show ONLY the closed banner for today's page when the restaurant is closed (no vague 'no menu' or link)
                         if (page == 0 && closedTodayStatus != null) {
                             Card(
                                 Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(containerColor = statusBg(closedTodayStatus.kind))
                             ) {
-                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Lock, contentDescription = null, tint = statusFg(closedTodayStatus.kind), modifier = Modifier.size(20.dp))
                                     Spacer(Modifier.width(10.dp))
                                     Column {
@@ -442,19 +442,20 @@ private fun MenuPagerBlock(
                                     }
                                 }
                             }
-                        }
-                        when {
-                            error != null -> InfoCard(s("Menu kon niet geladen worden", "Could not load menu"), error, s("Opnieuw", "Retry"), onRetry, warning = true)
-                            pageMenu != null && (pageMenu!!.unavailable || pageMenu!!.sections.isEmpty()) ->
-                                InfoCard(s("Geen menu beschikbaar", "No menu available"), null, tr("menu"), onSite)
-                            pageMenu != null -> {
-                                pageMenu!!.sections.forEach { sec ->
-                                    Text(sec.title, style = MaterialTheme.typography.labelLarge, color = cs.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
-                                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow)) {
-                                        Column(Modifier.padding(vertical = 4.dp)) {
-                                            sec.dishes.forEachIndexed { index, dish ->
-                                                DishRow(dish, sec.soup)
-                                                if (index < sec.dishes.lastIndex) HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), thickness = 0.5.dp, color = cs.outlineVariant)
+                        } else {
+                            when {
+                                error != null -> InfoCard(s("Menu kon niet geladen worden", "Could not load menu"), error, s("Opnieuw", "Retry"), onRetry, warning = true)
+                                pageMenu != null && (pageMenu!!.unavailable || pageMenu!!.sections.isEmpty()) ->
+                                    InfoCard(s("Geen menu beschikbaar", "No menu available"), null, tr("menu"), onSite)
+                                pageMenu != null -> {
+                                    pageMenu!!.sections.forEach { sec ->
+                                        Text(sec.title, style = MaterialTheme.typography.labelLarge, color = cs.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                                        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow)) {
+                                            Column(Modifier.padding(vertical = 4.dp)) {
+                                                sec.dishes.forEachIndexed { index, dish ->
+                                                    DishRow(dish, sec.soup)
+                                                    if (index < sec.dishes.lastIndex) HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), thickness = 0.5.dp, color = cs.outlineVariant)
+                                                }
                                             }
                                         }
                                     }

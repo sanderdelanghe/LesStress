@@ -11,7 +11,6 @@ Modern, native Android companion app for students at **KU Leuven Kulak** and **V
 ### 📅 Smart Timetable & Schedule
 - **Direct KU Leuven TimeEdit Integration**: Seamlessly parses official schedule data directly from TimeEdit JSON, eliminating parsing fragility.
 - **Secondary Calendar Feed (Google Calendar / Custom ICS)**: Add your personal or exam calendar alongside your university schedule with dedicated custom colors and full location display.
-- **Google Calendar Sync**: Export university lectures to a dedicated 'LesStress' Google Calendar without duplicating your personal appointments.
 - **Adaptive Calendar Views**: Full 1-day, 3-day, 5-day, 7-day, and Agenda list views with smooth pinch-to-zoom, responsive layouts, and quick date navigation.
 - **Instant Search**: Find courses, professors, or rooms instantly with active keyboard actions.
 - **Deep-Linked Lesson Notifications**: Get notified before lectures start; tapping a notification opens the app directly into that lesson's details (room, lecturer, timing, and notes).

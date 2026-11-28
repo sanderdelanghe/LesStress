@@ -93,11 +93,22 @@ internal fun parseAlmaMenu(html: String): MenuData {
                 val p = e.trim().split(" "); val w = p.lastOrNull()?.removeSuffix("w")?.toIntOrNull()
                 if (w == null || p.size < 2) null else p[0] to w
             }?.minByOrNull { kotlin.math.abs(it.second - 400) }?.first?.let { if (it.startsWith("/")) ALMA_BASE + it else it }
-            // "vegan" must NOT match inside "vegetarisch/vegetarian" — check word boundary by excluding "vegetar" prefix
-            val bodyLc = body.lowercase(); val dishLc = dishName.lowercase()
-            val isVegan = Regex("\\bvegan\\b").containsMatchIn(bodyLc) || Regex("\\bvegan\\b").containsMatchIn(dishLc) || dishLc.contains("(vg)")
-            val isVegetarian = !isVegan && (body.contains("vegetar", true) || body.contains("veggie", true) ||
-                    dishName.contains("veggie", true) || dishName.contains("vegetar", true) || dishName.contains("(v)", true))
+            val isVegetarian = body.contains("vegetarisch-label", true) ||
+                    body.contains("niet-vegan", true) ||
+                    body.contains("vegetarisch", true) ||
+                    body.contains("vegetarian", true) ||
+                    body.contains("veggie", true) ||
+                    dishName.contains("veggie", true) ||
+                    dishName.contains("vegetar", true) ||
+                    dishName.contains("(v)", true)
+
+            val isVegan = !isVegetarian && (
+                    body.contains("vegan-label", true) ||
+                    body.contains("alt=\"vegan\"", true) ||
+                    Regex("(?<![a-zA-Z0-9_-])vegan(?![a-zA-Z0-9_-])", RegexOption.IGNORE_CASE).containsMatchIn(body) ||
+                    Regex("(?<![a-zA-Z0-9_-])vegan(?![a-zA-Z0-9_-])", RegexOption.IGNORE_CASE).containsMatchIn(dishName) ||
+                    dishName.contains("(vg)", true)
+            )
             dishes += Dish(dishName, price, img, isVegan = isVegan, isVegetarian = isVegetarian)
         }
         if (dishes.isNotEmpty()) sections += MenuSec(if (soup) s("Soep", "Soup") else s("Warm buffet", "Hot buffet"), soup, dishes)

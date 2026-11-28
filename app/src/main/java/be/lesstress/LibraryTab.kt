@@ -184,22 +184,25 @@ private fun LibraryProviderBlock(
                     Spacer(Modifier.width(8.dp))
                     Text(s("Zitplaats inchecken", "Seat Check-in"), style = MaterialTheme.typography.titleMedium)
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     OutlinedTextField(
                         value = seat,
                         onValueChange = { seat = it.filter(Char::isDigit) },
-                        label = { Text(tr("seat")) },
-                        placeholder = { Text("369") },
+                        placeholder = { Text(tr("seat") + " (bijv. 369)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.weight(1f).height(52.dp)
                     )
                     Button(
                         onClick = { seat.toIntOrNull()?.let { onLaunch(checkIn.urlForSeat(it)) } },
                         enabled = seat.isNotEmpty(),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.height(56.dp)
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.height(52.dp)
                     ) { Text(tr("checkin")) }
                 }
             }

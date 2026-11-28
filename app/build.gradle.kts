@@ -7,7 +7,7 @@ android {
     namespace = "be.lesstress"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
-    defaultConfig { applicationId = "be.lesstress"; minSdk = 26; targetSdk = 35; versionCode = 9; versionName = "2.1" }
+    defaultConfig { applicationId = "be.lesstress"; minSdk = 26; targetSdk = 35; versionCode = 10; versionName = "2.3" }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     buildTypes {
