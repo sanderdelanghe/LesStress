@@ -1,5 +1,11 @@
-package be.lesstress.providers
+package be.lesstress.providers.libraries
 
+import be.lesstress.LibRow
+import be.lesstress.LibraryBookAction
+import be.lesstress.LibraryCheckInAction
+import be.lesstress.LibraryData
+import be.lesstress.LibraryOccupancy
+import be.lesstress.LibraryProvider
 import be.lesstress.s
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -9,7 +15,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-object KulakKbibProvider : LibraryProvider {
+object KulakBib : LibraryProvider {
     private const val LIB_API = "https://bib.kuleuven.be/apps/ub/blokkeninleuven/api/libraries/kbib"
     private const val KURT_URL = "https://kurt3.ghum.kuleuven.be/locations/15"
 

@@ -1,19 +1,19 @@
 package be.lesstress.providers
 
 import android.content.Context
+import be.lesstress.LibraryProvider
+import be.lesstress.MenuProvider
 import be.lesstress.prefs
+import be.lesstress.providers.libraries.KulakBib
+import be.lesstress.providers.restaurants.KulakBroodjesbar
+import be.lesstress.providers.restaurants.KulakRestaurant
 
-/** Common contract for toggleable, reorderable data providers (dining, library, etc.). */
 interface AppProvider {
     val id: String
     val defaultEnabled: Boolean get() = true
     fun displayName(): String
 }
 
-/**
- * Shared registry managing provider discovery, enable/disable state, and display order
- * persisted in SharedPreferences.
- */
 abstract class ProviderRegistry<T : AppProvider>(private val keyPrefix: String) {
     abstract val all: List<T>
 
@@ -53,4 +53,17 @@ abstract class ProviderRegistry<T : AppProvider>(private val keyPrefix: String) 
         list[idx] = list[target].also { list[target] = list[idx] }
         c.prefs.edit().putString(orderKey, list.joinToString(",")).apply()
     }
+}
+
+object MenuProviderRegistry : ProviderRegistry<MenuProvider>("menu_provider") {
+    override val all: List<MenuProvider> = listOf(
+        KulakRestaurant,
+        KulakBroodjesbar
+    )
+}
+
+object LibraryProviderRegistry : ProviderRegistry<LibraryProvider>("lib_provider") {
+    override val all: List<LibraryProvider> = listOf(
+        KulakBib
+    )
 }

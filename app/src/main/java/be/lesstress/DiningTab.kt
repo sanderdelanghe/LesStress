@@ -34,16 +34,66 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import be.lesstress.providers.*
+import be.lesstress.providers.AppProvider
+import be.lesstress.providers.MenuProviderRegistry
+import be.lesstress.providers.restaurants.almaOpen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
+
+data class HRow(val date: LocalDate, val ranges: List<Pair<LocalTime, LocalTime>>)
+data class HSection(val title: String, val rows: List<HRow>)
+
+data class Dish(val name: String, val price: String?, val img: String?)
+data class MenuSec(val title: String, val soup: Boolean, val dishes: List<Dish>)
+data class MenuData(
+    val date: LocalDate?,
+    val dates: List<LocalDate>,
+    val sections: List<MenuSec>,
+    val unavailable: Boolean = false
+)
+
+sealed class MenuContent {
+    data class OrderButton(val orderUrl: String, val buttonLabel: () -> String) : MenuContent()
+    data class FullMenu(
+        val siteUrl: String,
+        val fetchDates: suspend () -> List<LocalDate>,
+        val fetchMenu: suspend (LocalDate?) -> MenuData
+    ) : MenuContent()
+    data class OnlineMenuLink(val menuUrl: String, val buttonLabel: () -> String) : MenuContent()
+}
+
+interface MenuProvider : AppProvider {
+    suspend fun fetchHours(today: LocalDate): List<HSection>
+    fun content(): MenuContent
+}
+
+private fun computeDiningStatus(secs: List<HSection>, now: LocalDateTime, loc: Locale): Status? {
+    if (secs.isEmpty()) return null
+    val byDate = secs.flatMap { it.rows }.groupBy({ it.date }, { it.ranges }).mapValues { e -> e.value.flatten().sortedBy { it.first } }
+    val today = now.toLocalDate()
+    val t = now.toLocalTime()
+    val todays = byDate[today].orEmpty()
+    todays.firstOrNull { t >= it.first && t < it.second }?.let { r ->
+        val mins = Duration.between(t, r.second).toMinutes()
+        return if (mins <= 30) Status(1, tr("open"), s("Sluit over $mins min (om ${hhmm(r.second)})", "Closes in $mins min (at ${hhmm(r.second)})"))
+        else Status(0, tr("open"), s("Sluit om ${hhmm(r.second)}", "Closes at ${hhmm(r.second)}"))
+    }
+    todays.firstOrNull { it.first > t }?.let { return Status(2, tr("closed"), s("Opent om ${hhmm(it.first)}", "Opens at ${hhmm(it.first)}")) }
+    val next = byDate.filter { it.key > today && it.value.isNotEmpty() }.minByOrNull { it.key }
+        ?: return Status(2, tr("closed"), s("Vandaag gesloten", "Closed today"))
+    val whenText = if (next.key == today.plusDays(1)) s("morgen", "tomorrow")
+    else next.key.dayOfWeek.getDisplayName(TextStyle.SHORT, loc) + " " + next.key.dayOfMonth + "/" + next.key.monthValue
+    return Status(2, tr("closed"), s("Opent $whenText om ${hhmm(next.value.first().first)}", "Opens $whenText at ${hhmm(next.value.first().first)}"))
+}
 
 private val brussels = ZoneId.of("Europe/Brussels")
 private val imageCache = LruCache<String, ImageBitmap>(48)

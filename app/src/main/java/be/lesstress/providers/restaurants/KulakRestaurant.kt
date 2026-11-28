@@ -1,11 +1,14 @@
-package be.lesstress.providers
+package be.lesstress.providers.restaurants
 
+import be.lesstress.HSection
+import be.lesstress.MenuContent
+import be.lesstress.MenuProvider
 import be.lesstress.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
-object AlmaRestaurantProvider : MenuProvider {
+object KulakRestaurant : MenuProvider {
     private const val RESTAURANT_URL = "https://www.alma.be/nl/restaurants/kulak-restaurant"
 
     override val id = "alma_kulak_restaurant"

@@ -22,14 +22,34 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import be.lesstress.providers.*
+import be.lesstress.providers.AppProvider
+import be.lesstress.providers.LibraryProviderRegistry
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.time.Duration
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
+
+data class LibRow(val date: LocalDate, val open: LocalTime?, val close: LocalTime?)
+data class LibraryOccupancy(val occupied: Int, val capacity: Int)
+data class LibraryData(val hours: List<LibRow>, val occupancy: LibraryOccupancy? = null)
+data class LibraryBookAction(val url: String, val label: () -> String)
+data class LibraryCheckInAction(
+    val seatOffset: Int,
+    val urlPrefix: String = "https://kuleuven.be/kurtqr?id="
+) {
+    fun urlForSeat(seat: Int): String = "$urlPrefix${seat + seatOffset}"
+}
+
+interface LibraryProvider : AppProvider {
+    suspend fun fetchData(): LibraryData
+    val bookAction: LibraryBookAction? get() = null
+    val checkInAction: LibraryCheckInAction? get() = null
+}
 
 private val brussels = ZoneId.of("Europe/Brussels")
 

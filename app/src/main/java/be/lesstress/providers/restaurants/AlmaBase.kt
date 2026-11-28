@@ -1,19 +1,17 @@
-package be.lesstress.providers
+package be.lesstress.providers.restaurants
 
-import be.lesstress.Status
-import be.lesstress.hhmm
+import be.lesstress.Dish
+import be.lesstress.HRow
+import be.lesstress.HSection
+import be.lesstress.MenuData
+import be.lesstress.MenuSec
 import be.lesstress.s
-import be.lesstress.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.Duration
 import java.time.LocalDate
-import java.time.LocalDateTime
 import java.time.LocalTime
-import java.time.format.TextStyle
-import java.util.Locale
 
 private const val ALMA_BASE = "https://www.alma.be"
 
@@ -100,23 +98,4 @@ internal fun parseAlmaMenu(html: String): MenuData {
         if (dishes.isNotEmpty()) sections += MenuSec(if (soup) s("Soep", "Soup") else s("Warm buffet", "Hot buffet"), soup, dishes)
     }
     return MenuData(shown, dates, sections)
-}
-
-internal fun computeDiningStatus(secs: List<HSection>, now: LocalDateTime, loc: Locale): Status? {
-    if (secs.isEmpty()) return null
-    val byDate = secs.flatMap { it.rows }.groupBy({ it.date }, { it.ranges }).mapValues { e -> e.value.flatten().sortedBy { it.first } }
-    val today = now.toLocalDate()
-    val t = now.toLocalTime()
-    val todays = byDate[today].orEmpty()
-    todays.firstOrNull { t >= it.first && t < it.second }?.let { r ->
-        val mins = Duration.between(t, r.second).toMinutes()
-        return if (mins <= 30) Status(1, tr("open"), s("Sluit over $mins min (om ${hhmm(r.second)})", "Closes in $mins min (at ${hhmm(r.second)})"))
-        else Status(0, tr("open"), s("Sluit om ${hhmm(r.second)}", "Closes at ${hhmm(r.second)}"))
-    }
-    todays.firstOrNull { it.first > t }?.let { return Status(2, tr("closed"), s("Opent om ${hhmm(it.first)}", "Opens at ${hhmm(it.first)}")) }
-    val next = byDate.filter { it.key > today && it.value.isNotEmpty() }.minByOrNull { it.key }
-        ?: return Status(2, tr("closed"), s("Vandaag gesloten", "Closed today"))
-    val whenText = if (next.key == today.plusDays(1)) s("morgen", "tomorrow")
-    else next.key.dayOfWeek.getDisplayName(TextStyle.SHORT, loc) + " " + next.key.dayOfMonth + "/" + next.key.monthValue
-    return Status(2, tr("closed"), s("Opent $whenText om ${hhmm(next.value.first().first)}", "Opens $whenText at ${hhmm(next.value.first().first)}"))
 }

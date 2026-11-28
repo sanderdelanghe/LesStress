@@ -1,11 +1,14 @@
-package be.lesstress.providers
+package be.lesstress.providers.restaurants
 
+import be.lesstress.HSection
+import be.lesstress.MenuContent
+import be.lesstress.MenuProvider
 import be.lesstress.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
-object AlmaBroodjesbarProvider : MenuProvider {
+object KulakBroodjesbar : MenuProvider {
     private const val BROODJES_URL = "https://www.alma.be/nl/restaurants/kulak-campus-hal-a-broodje-app"
     private const val ORDER_URL = "https://orderbilly.com/alma-kulak"
 
