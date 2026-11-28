@@ -39,6 +39,7 @@ import be.lesstress.providers.MenuProviderRegistry
 import be.lesstress.providers.restaurants.almaOpen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Duration
@@ -135,7 +136,7 @@ fun DiningTab() {
     val loc = appLocale()
     var reload by remember { mutableIntStateOf(0) }
     var now by remember { mutableStateOf(LocalDateTime.now(brussels)) }
-    LaunchedEffect(Unit) { while (true) { delay(30_000); now = LocalDateTime.now(brussels) } }
+    LaunchedEffect(Unit) { while (isActive) { delay(30_000); now = LocalDateTime.now(brussels) } }
 
     val providers = remember(AppState.version) { MenuProviderRegistry.activeOrdered(ctx) }
     fun launchUrl(url: String) { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } }
@@ -199,14 +200,22 @@ private fun MenuProviderBlock(
             }
         }
         is MenuContent.FullMenu -> {
-            var dates by remember(provider.id, reload) { mutableStateOf(listOf<LocalDate>()) }
+            var dates by remember(provider.id, reload) { mutableStateOf<List<LocalDate>?>(null) }
+            var datesError by remember(provider.id, reload) { mutableStateOf<String?>(null) }
             val cache = remember(provider.id) { HashMap<String, MenuData>() }
             LaunchedEffect(provider.id, AppState.version, reload) {
-                dates = runCatching { content.fetchDates() }.getOrDefault(emptyList())
+                datesError = null
+                runCatching { content.fetchDates() }
+                    .onSuccess { dates = it }
+                    .onFailure { e ->
+                        datesError = e.message ?: "offline"
+                        dates = emptyList()
+                    }
             }
             VenueCard(provider.displayName(), hours, now, loc)
             MenuPagerBlock(
-                dates = dates.filter { it >= now.toLocalDate() },
+                dates = dates?.filter { it >= now.toLocalDate() },
+                datesError = datesError,
                 today = now.toLocalDate(),
                 loc = loc,
                 cache = cache,
@@ -275,7 +284,8 @@ private fun HoursList(sections: List<HSection>, today: LocalDate, loc: Locale) {
 
 @Composable
 private fun MenuPagerBlock(
-    dates: List<LocalDate>,
+    dates: List<LocalDate>?,
+    datesError: String?,
     today: LocalDate,
     loc: Locale,
     cache: HashMap<String, MenuData>,
@@ -290,82 +300,96 @@ private fun MenuPagerBlock(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(s("Op het menu", "On the menu"), style = MaterialTheme.typography.titleMedium)
 
-        if (dates.isNotEmpty()) {
-            val pagerState = rememberPagerState(initialPage = 0) { dates.size }
-            val activeDate = dates.getOrNull(pagerState.currentPage) ?: today
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) } },
-                        enabled = pagerState.currentPage > 0
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = if (pagerState.currentPage > 0) cs.primary else cs.outlineVariant)
-                    }
-
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        val dayText = when (activeDate) {
-                            today -> tr("today").capf()
-                            today.plusDays(1) -> s("Morgen", "Tomorrow")
-                            else -> activeDate.dayOfWeek.getDisplayName(TextStyle.FULL, loc).capf()
-                        }
-                        Text(dayText, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = cs.primary)
-                        Text("${activeDate.dayOfMonth} ${activeDate.month.getDisplayName(TextStyle.FULL, loc)}", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-                    }
-
-                    IconButton(
-                        onClick = { coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) } },
-                        enabled = pagerState.currentPage < dates.size - 1
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = if (pagerState.currentPage < dates.size - 1) cs.primary else cs.outlineVariant)
-                    }
-                }
+        when {
+            dates == null -> {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
             }
+            datesError != null && dates.isEmpty() -> {
+                InfoCard(
+                    s("Menu kon niet geladen worden", "Could not load menu"),
+                    datesError,
+                    s("Opnieuw", "Retry"),
+                    onRetry,
+                    warning = true
+                )
+            }
+            dates.isNotEmpty() -> {
+                val pagerState = rememberPagerState(initialPage = 0) { dates.size }
+                val activeDate = dates.getOrNull(pagerState.currentPage) ?: today
 
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxWidth().animateContentSize(),
-                pageSpacing = 12.dp,
-                verticalAlignment = Alignment.Top
-            ) { page ->
-                val pageDate = dates[page]
-                var pageMenu by remember(pageDate, reload) { mutableStateOf<MenuData?>(cache["${AppState.version}-$reload-$pageDate"]) }
-                var loading by remember(pageDate, reload) { mutableStateOf(pageMenu == null) }
-                var error by remember(pageDate, reload) { mutableStateOf<String?>(null) }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(
+                            onClick = { coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) } },
+                            enabled = pagerState.currentPage > 0
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = if (pagerState.currentPage > 0) cs.primary else cs.outlineVariant)
+                        }
 
-                LaunchedEffect(pageDate, reload) {
-                    if (pageMenu == null) {
-                        loading = true; error = null
-                        try {
-                            val m = fetchMenu(if (page == 0) null else pageDate)
-                            cache["${AppState.version}-$reload-$pageDate"] = m
-                            pageMenu = m
-                        } catch (e: Exception) { error = e.message ?: "offline" }
-                        loading = false
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            val dayText = when (activeDate) {
+                                today -> tr("today").capf()
+                                today.plusDays(1) -> s("Morgen", "Tomorrow")
+                                else -> activeDate.dayOfWeek.getDisplayName(TextStyle.FULL, loc).capf()
+                            }
+                            Text(dayText, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = cs.primary)
+                            Text("${activeDate.dayOfMonth} ${activeDate.month.getDisplayName(TextStyle.FULL, loc)}", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                        }
+
+                        IconButton(
+                            onClick = { coroutineScope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) } },
+                            enabled = pagerState.currentPage < dates.size - 1
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = if (pagerState.currentPage < dates.size - 1) cs.primary else cs.outlineVariant)
+                        }
                     }
                 }
 
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    when {
-                        error != null -> InfoCard(s("Menu kon niet geladen worden", "Could not load menu"), error, s("Opnieuw", "Retry"), onRetry, warning = true)
-                        pageMenu != null && (pageMenu!!.unavailable || pageMenu!!.sections.isEmpty()) ->
-                            InfoCard(s("Geen menu beschikbaar", "No menu available"), s("Het restaurant is mogelijk gesloten of het menu staat nog niet online.", "The restaurant may be closed or the menu isn't online yet."), tr("menu"), onSite)
-                        pageMenu != null -> {
-                            pageMenu!!.sections.forEach { sec ->
-                                Text(sec.title, style = MaterialTheme.typography.labelLarge, color = cs.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
-                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow)) {
-                                    Column(Modifier.padding(vertical = 4.dp)) {
-                                        sec.dishes.forEachIndexed { index, dish ->
-                                            DishRow(dish, sec.soup)
-                                            if (index < sec.dishes.lastIndex) HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), thickness = 0.5.dp, color = cs.outlineVariant)
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    pageSpacing = 12.dp,
+                    verticalAlignment = Alignment.Top
+                ) { page ->
+                    val pageDate = dates[page]
+                    var pageMenu by remember(pageDate, reload) { mutableStateOf<MenuData?>(cache["${AppState.version}-$reload-$pageDate"]) }
+                    var loading by remember(pageDate, reload) { mutableStateOf(pageMenu == null) }
+                    var error by remember(pageDate, reload) { mutableStateOf<String?>(null) }
+
+                    LaunchedEffect(pageDate, reload) {
+                        if (pageMenu == null) {
+                            loading = true; error = null
+                            try {
+                                val m = fetchMenu(if (page == 0) null else pageDate)
+                                cache["${AppState.version}-$reload-$pageDate"] = m
+                                pageMenu = m
+                            } catch (e: Exception) { error = e.message ?: "offline" }
+                            loading = false
+                        }
+                    }
+
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        when {
+                            error != null -> InfoCard(s("Menu kon niet geladen worden", "Could not load menu"), error, s("Opnieuw", "Retry"), onRetry, warning = true)
+                            pageMenu != null && (pageMenu!!.unavailable || pageMenu!!.sections.isEmpty()) ->
+                                InfoCard(s("Geen menu beschikbaar", "No menu available"), s("Het restaurant is mogelijk gesloten of het menu staat nog niet online.", "The restaurant may be closed or the menu isn't online yet."), tr("menu"), onSite)
+                            pageMenu != null -> {
+                                pageMenu!!.sections.forEach { sec ->
+                                    Text(sec.title, style = MaterialTheme.typography.labelLarge, color = cs.primary, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+                                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = cs.surfaceContainerLow)) {
+                                        Column(Modifier.padding(vertical = 4.dp)) {
+                                            sec.dishes.forEachIndexed { index, dish ->
+                                                DishRow(dish, sec.soup)
+                                                if (index < sec.dishes.lastIndex) HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), thickness = 0.5.dp, color = cs.outlineVariant)
+                                            }
                                         }
                                     }
                                 }
@@ -374,8 +398,9 @@ private fun MenuPagerBlock(
                     }
                 }
             }
-        } else {
-            InfoCard(s("Geen aankomende menu's gevonden", "No upcoming menus found"), s("Bekijk de volledige kalender op de Alma-website.", "Check the full calendar on the Alma website."), tr("menu"), onSite)
+            else -> {
+                InfoCard(s("Geen aankomende menu's gevonden", "No upcoming menus found"), s("Bekijk de volledige kalender op de Alma-website.", "Check the full calendar on the Alma website."), tr("menu"), onSite)
+            }
         }
     }
 }
